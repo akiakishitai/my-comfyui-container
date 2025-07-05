@@ -134,7 +134,7 @@ EOS
 #COPY data/pyproject.toml ${UV_PROJECT}/pyproject.toml
 RUN --mount=type=cache,dst=/root/.cache/uv,sharing=locked,id=comfy-cache \
   --mount=type=bind,src=data/pyproject.toml,dst=/app/pyproject.toml,rw \
-  <<EOS
+  <<EOS bash
   uv add --no-sync -r requirements.txt
   uv add --no-sync -r custom_nodes/comfyui-manager/requirements.txt
   uv sync
