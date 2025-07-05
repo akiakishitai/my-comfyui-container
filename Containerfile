@@ -9,6 +9,11 @@ ARG UV_PROJECT=/app
 ARG UV_PROJECT_ENVIRONMENT=${UV_PROJECT}/venv
 ARG VIRTUAL_ENV=${UV_PROJECT_ENVIRONMENT}
 ARG TZ="Asia/Tokyo"
+ARG COMFYUI_VERSION=0.3.40
+ARG COMFYUI_MANAGER_VERSION=3.33
+ARG COMFYUI_PATH=${UV_PROJECT}/comfyui
+ARG COMFYUI_EXTRA_DIR=/storage/comfyui-extra
+ARG CLOUD_DIR=/storage/cloud
 
 # ------------------------------
 # ref: https://hub.docker.com/_/busybox/
@@ -91,3 +96,46 @@ COPY --from=ghcr.io/astral-sh/uv:0.7.13 /uv /uvx /bin/
 # Create python virtual environment
 WORKDIR ${UV_PROJECT}
 RUN uv venv --python ${PYTHON_VERSION} ${UV_PROJECT_ENVIRONMENT}
+
+# ------------------------------
+FROM base AS comfyui
+ARG COMFYUI_PATH
+ARG COMFYUI_VERSION
+ARG COMFYUI_MANAGER_VERSION
+ARG CLOUD_DIR
+
+ENV COMFYUI_PATH=${COMFYUI_PATH} \
+  COMFYUI_INPUT_DIR=${CLOUD_DIR}/input \
+  COMFYUI_OUTPUT_DIR=${CLOUD_DIR}/output \
+  COMFYUI_USER_DIR=${CLOUD_DIR}/userdata
+
+# -- Pre-Install --
+# クラウドストレージと連携する ComfyUI のディレクトリを作成
+RUN mkdir -p ${COMFYUI_INPUT_DIR} ${COMFYUI_OUTPUT_DIR} ${COMFYUI_USER_DIR}
+
+# -- Install ComfyUI and ComfyUI-Manager --
+# ref: https://comfyui-wiki.com/ja/install/install-comfyui/install-comfyui-on-linux
+# ref: https://github.com/Comfy-Org/ComfyUI-Manager
+WORKDIR ${COMFYUI_PATH}
+# Clone
+RUN <<EOS bash
+  git clone \
+    --filter=blob:none \
+    --branch v${COMFYUI_VERSION} \
+    --single-branch \
+    https://github.com/comfyanonymous/ComfyUI.git .
+
+  git clone \
+    --filter=blob:none \
+    --branch ${COMFYUI_MANAGER_VERSION} \
+    https://github.com/Comfy-Org/ComfyUI-Manager.git custom_nodes/comfyui-manager
+EOS
+# Install python packages
+#COPY data/pyproject.toml ${UV_PROJECT}/pyproject.toml
+RUN --mount=type=cache,dst=/root/.cache/uv,sharing=locked,id=comfy-cache \
+  --mount=type=bind,src=data/pyproject.toml,dst=/app/pyproject.toml,rw \
+  <<EOS bash
+  uv add --no-sync -r requirements.txt
+  uv add --no-sync -r custom_nodes/comfyui-manager/requirements.txt
+  uv sync
+EOS

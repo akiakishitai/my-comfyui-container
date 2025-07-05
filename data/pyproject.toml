@@ -1,0 +1,39 @@
+[project]
+name = "comfyui-pytorch"
+version = "0.1.0"
+description = "Manage required PyTorch with ComfyUI"
+requires-python = "==3.12.*"
+dependencies = [
+  "torch>=2.7.0",
+  #"torchvision",
+  #"torchaudio",
+  "xformers>=0.0.30 ; platform_machine != 'aarch64'",
+]
+
+[tool.uv.sources]
+torch = [
+  { index = "pytorch-cu126", marker = "platform_machine != 'aarch64'" },
+  { index = "pytorch-cpu", marker = "platform_machine == 'aarch64'" },
+]
+torchvision = [
+  { index = "pytorch-cu126", marker = "platform_machine != 'aarch64'" },
+  { index = "pytorch-cpu", marker = "platform_machine == 'aarch64'" },
+]
+torchaudio = [
+  { index = "pytorch-cu126", marker = "platform_machine != 'aarch64'" },
+  { index = "pytorch-cpu", marker = "platform_machine == 'aarch64'" },
+]
+xformers = [
+  { index = "pytorch-cu126", marker = "platform_machine != 'aarch64'" },
+  { index = "pytorch-cpu", marker = "platform_machine == 'aarch64'" },
+]
+
+[[tool.uv.index]]
+name = "pytorch-cu126"
+url = "https://download.pytorch.org/whl/cu126"
+explicit = true
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
