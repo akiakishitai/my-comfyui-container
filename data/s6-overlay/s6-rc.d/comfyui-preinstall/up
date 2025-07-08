@@ -1,0 +1,54 @@
+# -----
+# ComfyUI のネットワーク保存用ディレクトリを作成する。
+# ref: $COMFYUI_PATH/extra_model_paths.yaml
+# -----
+
+with-contenv
+# ディレクトリ作成
+importas -S -i -- COMFYUI_EXTRA_DIR
+foreground
+{
+  mkdir -p
+    ${COMFYUI_EXTRA_DIR}/custom_nodes
+    ${COMFYUI_EXTRA_DIR}/models
+}
+execline-cd ${COMFYUI_EXTRA_DIR}/models
+if {
+  mkdir -p
+    checkpoints
+    clip
+    clip_vision
+    configs
+    controlnet
+    diffusers
+    diffusion_models
+    embeddings
+    gligen
+    hypernetworks
+    loras
+    photomaker
+    style_models
+    text_encoders
+    unet
+    upscale_models
+    vae
+    vae_approx
+}
+foreground {
+  echo "comfyui-preinstall: success: COMFYUI_EXTRA_DIR -> ${COMFYUI_EXTRA_DIR}"
+}
+
+# ComfyUI-Manager の設定ファイルがなければデフォルトからコピー
+multisubstitute
+{
+  importas -S -i -- COMFYUI_PATH
+  importas -S -i -- COMFYUI_USER_DIR
+}
+multisubstitute
+{
+  define DEFAULT_CONF ${COMFYUI_PATH}/user/default/ComfyUI-Manager/config.ini
+  define USER_CONF ${COMFYUI_USER_DIR}/default/ComfyUI-Manager/config.ini
+}
+if -n { eltest -f ${USER_CONF} }
+foreground { exec install -D ${DEFAULT_CONF} ${USER_CONF} }
+exec echo "comfyui-preinstall: info: copy ComfyUI-Manager config to ${USER_CONF}"

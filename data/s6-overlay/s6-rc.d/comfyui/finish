@@ -1,0 +1,20 @@
+#!/command/execlineb -S3
+
+# $1 - ./run スクリプトの終了コード
+# $2 - シグナル番号
+# $3 - サービス(ディレクトリ)名
+# $4 - ./run スクリプトのプロセスグループID (PGID)
+
+# 引数について: https://skarnet.org/software/s6/servicedir.html
+# exitcodes: https://skarnet.org/software/execline/exitcodes.html
+
+# ./run がシグナルを受けて終了した場合の処理
+ifelse { eltest ${1} -eq 256 }
+{
+  foreground { echo "${3}: info: recieved SIGNAL ${2}" }
+  backtick -E EXIT_STATUS { s6-expr 128 + ${2} }
+  exit ${EXIT_STATUS}
+}
+
+# シグナル以外での正常終了または異常終了時の処理
+exit ${1}
