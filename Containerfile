@@ -139,3 +139,19 @@ RUN --mount=type=cache,dst=/root/.cache/uv,sharing=locked,id=comfy-cache \
   uv add --no-sync -r custom_nodes/comfyui-manager/requirements.txt
   uv sync
 EOS
+
+# ------------------------------
+FROM comfyui AS final
+ARG S6_ROOTFS
+ARG COMFYUI_EXTRA_DIR
+
+ENV COMFYUI_PORT=8188 COMFYUI_EXTRA_DIR=${COMFYUI_EXTRA_DIR}
+
+# アプリなどのコピー
+COPY --from=s6 ${S6_ROOTFS}/ /
+COPY data/comfyui/ ${COMFYUI_PATH}/
+COPY data/s6-overlay/ /etc/s6-overlay/
+
+EXPOSE ${COMFYUI_PORT}
+WORKDIR ${UV_PROJECT}
+ENTRYPOINT [ "/init" ]

@@ -1,0 +1,40 @@
+#!/command/execlineb -P
+
+# ComfyUI Serve
+
+# Variable define
+with-contenv
+multisubstitute {
+  importas -S -i -- COMFYUI_PATH
+  importas -S -i -- COMFYUI_INPUT_DIR
+  importas -S -i -- COMFYUI_OUTPUT_DIR
+  importas -S -i -- COMFYUI_USER_DIR
+  importas -S -i -- COMFYUI_PORT
+  # 外部接続可能にするため 0.0.0.0 を指定
+  define LISTEN 0.0.0.0
+}
+define -s -C OPTIONS "--disable-auto-launch
+  --listen ${LISTEN}
+  --port ${COMFYUI_PORT}
+  --input-directory ${COMFYUI_INPUT_DIR}
+  --output-directory ${COMFYUI_OUTPUT_DIR}
+  --user-directory ${COMFYUI_USER_DIR}
+  --verbose INFO
+  --log-stdout"
+
+# ComfyUI starting
+backtick -E -- ARCH { uname --machine }
+case -i ${ARCH}
+{
+  "^aarch64$" {
+    exec python -u ${COMFYUI_PATH}/main.py --cpu ${OPTIONS}
+  }
+
+  "^amd64$" {
+    exec python -u ${COMFYUI_PATH}/main.py ${OPTIONS}
+  }
+}
+
+# catch error
+foreground { echo "comfyui: error: Not support: ${ARCH} arch." }
+exit 126

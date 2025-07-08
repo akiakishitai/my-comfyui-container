@@ -1,0 +1,25 @@
+# ---------
+# tzdata のタイムゾーンを設定する。
+# ---------
+
+with-contenv
+# 環境変数チェック
+ifelse -n { eltest -v TZ }
+{ exec echo timezone: skipped: Not defined TZ environment. }
+
+importas -S -i TZ
+# ファイルの存在確認
+ifelse -n { eltest -e /usr/share/zoneinfo/${TZ} }
+{
+  foreground { exec echo timezone: error: Wrong TZ=${TZ} value. }
+  exit 1
+}
+
+# タイムゾーンを設定
+if { ln -sf /usr/share/zoneinfo/${TZ} /etc/localtime }
+if {
+  redirfd -w 1 /etc/timezone
+  echo ${TZ}
+}
+
+exec echo timezone: success: TZ -> ${TZ}
