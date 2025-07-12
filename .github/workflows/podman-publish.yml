@@ -33,9 +33,9 @@ jobs:
       matrix:
         include:
           - os: ubuntu-24.04
-            arch: x86_64
+            arch: amd64
           - os: ubuntu-24.04-arm
-            arch: aarch64
+            arch: arm64
     runs-on: ${{ matrix.os }}
     permissions:
       contents: read
@@ -101,8 +101,9 @@ jobs:
           push: ${{ github.base_ref != 'main' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          platforms: linux/${{ matrix.arch }}
+          cache-from: type=gha,scope=linux_${{ matrix.arch }}
+          cache-to: type=gha,mode=max,scope=linux_${{ matrix.arch }}
 
       # Sign the resulting Docker image digest except on PRs.
       # This will only write to the public Rekor transparency log when the Docker
