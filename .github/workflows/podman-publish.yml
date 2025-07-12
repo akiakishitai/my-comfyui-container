@@ -119,6 +119,6 @@ jobs:
         # This step uses the identity token to provision an ephemeral certificate
         # against the sigstore community Fulcio instance.
         run: |
-          echo "${TAGS}" | jq -r '.[]' | while read -r image; do
+          echo "${TAGS}" | while read -r image; do
             cosign sign --yes "${image}@${DIGEST}"
           done
