@@ -27,11 +27,26 @@ ARG DOWNLOAD_URL="https://github.com/just-containers/s6-overlay/releases/downloa
 
 WORKDIR ${S6_ROOTFS}
 RUN <<EOS sh
-  wget -P ${DOWNLOAD_DIR} \
-    ${DOWNLOAD_URL}/s6-overlay-noarch.tar.xz \
-    ${DOWNLOAD_URL}/s6-overlay-${TARGETARCH}.tar.xz
-  tar -C ./ -xJf ${DOWNLOAD_DIR}/s6-overlay-noarch.tar.xz
-  tar -C ./ -xJf ${DOWNLOAD_DIR}/s6-overlay-${TARGETARCH}.tar.xz
+  mkdir -p ${DOWNLOAD_DIR}
+  wget -P ${DOWNLOAD_DIR} "${DOWNLOAD_URL}/s6-overlay-noarch.tar.xz"
+  tar -C ./ -xJf "${DOWNLOAD_DIR}/s6-overlay-noarch.tar.xz"
+
+  case "${TARGETARCH:-__EMPTY__}" in
+    "amd64")
+      wget -P ${DOWNLOAD_DIR} "${DOWNLOAD_URL}/s6-overlay-x86_64.tar.xz"
+      tar -C ./ -xJf "${DOWNLOAD_DIR}/s6-overlay-x86_64.tar.xz"
+      ;;
+    "arm64")
+      wget -P ${DOWNLOAD_DIR} "${DOWNLOAD_URL}/s6-overlay-aarch64.tar.xz"
+      tar -C ./ -xJf "${DOWNLOAD_DIR}/s6-overlay-aarch64.tar.xz"
+      ;;
+    *)
+      echo "WARN: Unsupported architecture: ${TARGETARCH}"
+      wget -P ${DOWNLOAD_DIR} "${DOWNLOAD_URL}/s6-overlay-$(uname -m).tar.xz"
+      tar -C ./ -xJf "${DOWNLOAD_DIR}/s6-overlay-$(uname -m).tar.xz"
+      ;;
+  esac
+
   rm -rf ${DOWNLOAD_DIR}
 EOS
 
