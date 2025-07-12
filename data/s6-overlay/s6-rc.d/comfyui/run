@@ -30,7 +30,7 @@ case -i ${ARCH}
     exec python -u ${COMFYUI_PATH}/main.py --cpu ${OPTIONS}
   }
 
-  "^amd64$" {
+  "^x86_64$" {
     exec python -u ${COMFYUI_PATH}/main.py ${OPTIONS}
   }
 }
