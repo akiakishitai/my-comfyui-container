@@ -57,82 +57,52 @@ jobs:
         with:
           cosign-release: 'v2.2.4'
 
-      - name: Convert container envs to lowercases
-        id: lower
-        run: |
-          echo "IMAGE_NAME=${REGISTRY}/${IMAGE_NAME,,}" >> "$GITHUB_ENV"
+      # Set up BuildKit Docker container builder to be able to build
+      # multi-platform images and export cache
+      # https://github.com/docker/setup-buildx-action
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@6524bf65af31da8d45b59e8c27de4bd072b392f5 # v3.8.0
 
-          owner="${{ github.repository_owner }}"
-          echo "LOGIN_REGISTRY=${REGISTRY}/${owner,,}" >> "$GITHUB_OUTPUT"
-
-      # Login to a container image registry
-      # https://github.com/redhat-actions/podman-login
-      - name: Log in to a ${{ env.REGISTRY }}
-        uses: redhat-actions/podman-login@4934294ad0449894bcd1e9f191899d7292469603 # v1.7
+      # Login against a Docker registry
+      # https://github.com/docker/login-action
+      - name: Log into registry ${{ env.REGISTRY }}
+        uses: docker/login-action@74a5d142397b4f367a81961eba4e8cd7edddf772 # v3.4.0
         with:
           username: ${{ github.actor }}
           password: ${{ github.token }}
-          registry: ${{ steps.lower.outputs.LOGIN_REGISTRY }}
+          registry: ${{ env.REGISTRY }}
 
-      # Extract metadata (tags, labels) for Buildah
+      # Extract metadata (tags, labels) for Container
       # https://github.com/docker/metadata-action
-      - name: Extract buildah metadata
+      - name: Extract container metadata
         id: meta
         uses: docker/metadata-action@902fa8ec7d6ecbf8d84d538b9b233a880e428804 # v5.7.0
         with:
           # `images` property is converted to lowercase
-          images: ${{ env.IMAGE_NAME }}
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
             type=semver,pattern={{major}},enable=${{ !startsWith(github.ref, 'refs/tags/v0.') }}
             type=edge,branch=develop
             type=ref,event=pr
-          # `tags` in `redhat-actions/buildah-build` is SSV format
-          sep-tags: ' '
           labels: |
             org.opencontainers.image.title=My ComfyUI Container
             org.opencontainers.image.description=REST API server with ComfyUI backend
 
-      # Build container image with Buildah
-      # https://github.com/redhat-actions/buildah-build
-      - name: Build container image
-        id: build-image
-        uses: redhat-actions/buildah-build@7a95fa7ee0f02d552a32753e7414641a04307056 # v2.13
+      # Build and push Docker image with Buildx (don't push on PR)
+      # https://github.com/docker/build-push-action
+      - name: Build and push Docker image
+        id: build-and-push
+        uses: docker/build-push-action@14487ce63c7a62a4a324b0bfb37086795e31c6c1 # v6.16.0
         with:
-          # `image` property is converted to lowercase
-          # https://github.com/redhat-actions/buildah-build/blob/7a95fa7ee0f02d552a32753e7414641a04307056/src/index.ts#L48
-          image: ${{ env.IMAGE_NAME }}
-          # full name (include registry and image name)
+          context: .
+          file: Containerfile
+          push: ${{ github.base_ref != 'main' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          context: .
-          containerfiles: |
-            ./Containerfile
-          build-args: |
-            TARGETARCH=${{ matrix.arch }}
-          layers: true
-          extra-args: |
-            --cache-to=${{ env.IMAGE_NAME }}
-            --cache-from=${{ env.IMAGE_NAME }}
-
-      - name: Check image metadata
-        run: |
-          set -x
-          buildah inspect ${{ steps.build-image.outputs.image-with-tag }} | jq ".OCIv1.architecture"
-          buildah inspect ${{ steps.build-image.outputs.image-with-tag }} | jq ".Docker.architecture"
-
-      # Push container image to registry with Podman
-      # If PR to main branch, skip.
-      # https://github.com/redhat-actions/push-to-registry
-      - name: Push image to ${{ env.REGISTRY }} registry
-        if: ${{ github.base_ref != 'main' }}
-        id: push
-        uses: redhat-actions/push-to-registry@5ed88d269cf581ea9ef6dd6806d01562096bee9c # v2.8
-        with:
-          #image: ${{ steps.build-image.outputs.image }}
-          tags: ${{ steps.build-image.outputs.tags }}
-          #registry: ${{ env.REGISTRY }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
 
       # Sign the resulting Docker image digest except on PRs.
       # This will only write to the public Rekor transparency log when the Docker
@@ -144,8 +114,8 @@ jobs:
         if: ${{ github.base_ref != 'main' }}
         env:
           # https://docs.github.com/en/actions/security-guides/security-hardening-for-github-actions#using-an-intermediate-environment-variable
-          TAGS: ${{ steps.push.outputs.registry-paths }}
-          DIGEST: ${{ steps.push.outputs.digest }}
+          TAGS: ${{ steps.meta.outputs.tags }}
+          DIGEST: ${{ steps.build-and-push.outputs.digest }}
         # This step uses the identity token to provision an ephemeral certificate
         # against the sigstore community Fulcio instance.
         run: |

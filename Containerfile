@@ -26,13 +26,13 @@ ARG DOWNLOAD_DIR=/tmp/s6
 ARG DOWNLOAD_URL="https://github.com/just-containers/s6-overlay/releases/download/v${S6_OVERLAY_VERSION}"
 
 WORKDIR ${S6_ROOTFS}
-RUN --mount=type=tmpfs,dst=/tmp/s6,tmpfs-size=64M \
-  <<EOS sh
+RUN <<EOS sh
   wget -P ${DOWNLOAD_DIR} \
     ${DOWNLOAD_URL}/s6-overlay-noarch.tar.xz \
     ${DOWNLOAD_URL}/s6-overlay-${TARGETARCH}.tar.xz
   tar -C ./ -xJf ${DOWNLOAD_DIR}/s6-overlay-noarch.tar.xz
   tar -C ./ -xJf ${DOWNLOAD_DIR}/s6-overlay-${TARGETARCH}.tar.xz
+  rm -rf ${DOWNLOAD_DIR}
 EOS
 
 # ------------------------------
