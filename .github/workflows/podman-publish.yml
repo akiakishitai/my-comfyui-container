@@ -108,10 +108,6 @@ jobs:
           platforms: linux/${{ matrix.arch }}
           cache-from: type=gha,scope=linux_${{ matrix.arch }}
           cache-to: type=gha,mode=max,scope=linux_${{ matrix.arch }}
-          # Disable to avoid 'unknown/unknown' on ghcr.io
-          provenance: false
-          # Disable to avoid 'unknown/unknown' on ghcr.io
-          sbom: false
 
       # Sign the resulting Docker image digest except on PRs.
       # This will only write to the public Rekor transparency log when the Docker
