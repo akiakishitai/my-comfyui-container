@@ -25,9 +25,67 @@ env:
   IMAGE_NAME: ${{ github.repository }}
 
 jobs:
+  lint-containerfile:
+    name: Scan the Containerfile
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      # プルリクエスト操作許可
+      pull-requests: write
+      checks: write
+      # セキュリティスキャン結果のアップロード許可
+      security-events: write
+    env:
+      HADOLINT_OUTPUT_FILE: hadolint-report.sarif
+      CI_BRANCH: ${{ github.ref_name }}
+      CI_COMMIT: ${{ github.sha }}
+      CI_REPO_OWNER: ${{ github.repository_owner }}
+      CI_REPO_NAME: ${{ github.event.repository.name }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # Install reviewdog
+      # https://github.com/reviewdog/action-setup
+      - name: Setup the reviewdog
+        uses: reviewdog/action-setup@e04ffabe3898a0af8d0fb1af00c188831c4b5893 # v1.3.2
+        with:
+          reviewdog_version: v0.20.3
+
+      # Lint a Containerfile
+      # https://github.com/hadolint/hadolint-action
+      - name: Lint a Containerfile with Hadolint
+        id: hadolint
+        uses: hadolint/hadolint-action@54c9adbab1582c2ef04b2016b760714a4bfde3cf # v3.1.0
+        with:
+          dockerfile: Containerfile
+          format: sarif
+          no-fail: true
+          output-file: ${{ env.HADOLINT_OUTPUT_FILE }}
+
+      - name: Reviewdog
+        if: ${{ github.event_name != 'pull_request' }}
+        env:
+          REVIEWDOG_GITHUB_API_TOKEN: ${{ github.token }}
+        run: |
+          cat ${{ env.HADOLINT_OUTPUT_FILE }} \
+            | reviewdog -name="hadolint" -f=sarif -reporter=github-check -level=warning -fail-level=warning
+
+      - name: Reviewdog (Pull Request)
+        if: ${{ github.event_name == 'pull_request' }}
+        env:
+          CI_BRANCH: ${{ github.head_ref }}
+          CI_PULL_REQUEST: ${{ github.event.pull_request.number }}
+          REVIEWDOG_GITHUB_API_TOKEN: ${{ github.token }}
+        run: |
+          cat ${{ env.HADOLINT_OUTPUT_FILE }} \
+            | reviewdog -name="hadolint" -f=sarif -reporter=github-pr-review -level=warning -fail-level=warning
+
   # PR先が main ブランチの場合はレジストリにプッシュしない
   build-multiarch:
     name: Build and Push multi-architecture image
+    needs: lint-containerfile
     strategy:
       fail-fast: false
       matrix:
