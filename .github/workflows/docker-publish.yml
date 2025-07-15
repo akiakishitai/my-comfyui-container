@@ -57,11 +57,12 @@ jobs:
       # https://github.com/hadolint/hadolint-action
       - name: Lint a Containerfile with Hadolint
         id: hadolint
+        continue-on-error: true
         uses: hadolint/hadolint-action@54c9adbab1582c2ef04b2016b760714a4bfde3cf # v3.1.0
         with:
           dockerfile: Containerfile
           format: sarif
-          no-fail: true
+          failure-threshold: warning
           output-file: ${{ env.HADOLINT_OUTPUT_FILE }}
 
       - name: Reviewdog
@@ -81,6 +82,19 @@ jobs:
         run: |
           cat ${{ env.HADOLINT_OUTPUT_FILE }} \
             | reviewdog -name="hadolint" -f=sarif -reporter=github-pr-review -level=warning -fail-level=warning
+
+      - name: Check linter exitcode
+        env:
+          HADOLINT_STATUS: ${{ steps.hadolint.outcome }}
+        run: |
+          case "${HADOLINT_STATUS}" in
+            'success')
+              exit 0 ;;
+            'failure')
+              exit 1 ;;
+            *)
+              exit 10 ;;
+          esac
 
   # PR先が main ブランチの場合はレジストリにプッシュしない
   build-multiarch:
