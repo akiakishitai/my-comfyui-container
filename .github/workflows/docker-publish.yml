@@ -41,6 +41,13 @@ jobs:
       CI_COMMIT: ${{ github.sha }}
       CI_REPO_OWNER: ${{ github.repository_owner }}
       CI_REPO_NAME: ${{ github.event.repository.name }}
+      REVIEWDOG_CMD: >-
+        reviewdog
+        -name="${REVIEWDOG_NAME:=hadolint}"
+        -f="${REVIEWDOG_INPUT_FORMAT:=sarif}"
+        -reporter="${REVIEWDOG_REPORTER:=github-check}"
+        -filter-mode="${REVIEWDOG_FILTER_MODE:=added}"
+        -fail-level="${REVIEWDOG_FAIL_LEVEL:=warning}"
 
     steps:
       - name: Checkout repository
@@ -69,9 +76,10 @@ jobs:
         if: ${{ github.event_name != 'pull_request' }}
         env:
           REVIEWDOG_GITHUB_API_TOKEN: ${{ github.token }}
+          REVIEWDOG_FILTER_MODE: file
+          REVIEWDOG_REPORTER: github-check
         run: |
-          cat ${{ env.HADOLINT_OUTPUT_FILE }} \
-            | reviewdog -name="hadolint" -f=sarif -reporter=github-check -level=warning -fail-level=warning
+          ${{ env.REVIEWDOG_CMD }} < ${{ env.HADOLINT_OUTPUT_FILE }}
 
       - name: Reviewdog (Pull Request)
         if: ${{ github.event_name == 'pull_request' }}
@@ -79,9 +87,10 @@ jobs:
           CI_BRANCH: ${{ github.head_ref }}
           CI_PULL_REQUEST: ${{ github.event.pull_request.number }}
           REVIEWDOG_GITHUB_API_TOKEN: ${{ github.token }}
+          REVIEWDOG_FILTER_MODE: file
+          REVIEWDOG_REPORTER: github-pr-review
         run: |
-          cat ${{ env.HADOLINT_OUTPUT_FILE }} \
-            | reviewdog -name="hadolint" -f=sarif -reporter=github-pr-review -level=warning -fail-level=warning
+          ${{ env.REVIEWDOG_CMD }} < ${{ env.HADOLINT_OUTPUT_FILE }}
 
       - name: Check linter exitcode
         env:
