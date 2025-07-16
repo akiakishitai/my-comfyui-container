@@ -41,6 +41,9 @@ jobs:
       CI_COMMIT: ${{ github.sha }}
       CI_REPO_OWNER: ${{ github.repository_owner }}
       CI_REPO_NAME: ${{ github.event.repository.name }}
+      # メッセージテキストに `ruleId` を付加
+      JQ_FILTER_FOR_SARIF: >-
+        .runs[].results[] |= (.ruleId as $rule | .message.text |= ($rule + ": " + .))
       REVIEWDOG_CMD: >-
         reviewdog
         -name="${REVIEWDOG_NAME:=hadolint}"
@@ -76,10 +79,11 @@ jobs:
         if: ${{ github.event_name != 'pull_request' }}
         env:
           REVIEWDOG_GITHUB_API_TOKEN: ${{ github.token }}
-          REVIEWDOG_FILTER_MODE: file
+          REVIEWDOG_FILTER_MODE: diff_context
           REVIEWDOG_REPORTER: github-check
         run: |
-          ${{ env.REVIEWDOG_CMD }} < ${{ env.HADOLINT_OUTPUT_FILE }}
+          jq -c "${JQ_FILTER_FOR_SARIF}" ${{ env.HADOLINT_OUTPUT_FILE }} |
+          ${{ env.REVIEWDOG_CMD }}
 
       - name: Reviewdog (Pull Request)
         if: ${{ github.event_name == 'pull_request' }}
@@ -87,10 +91,11 @@ jobs:
           CI_BRANCH: ${{ github.head_ref }}
           CI_PULL_REQUEST: ${{ github.event.pull_request.number }}
           REVIEWDOG_GITHUB_API_TOKEN: ${{ github.token }}
-          REVIEWDOG_FILTER_MODE: file
+          REVIEWDOG_FILTER_MODE: diff_context
           REVIEWDOG_REPORTER: github-pr-review
         run: |
-          ${{ env.REVIEWDOG_CMD }} < ${{ env.HADOLINT_OUTPUT_FILE }}
+          jq -c "${JQ_FILTER_FOR_SARIF}" ${{ env.HADOLINT_OUTPUT_FILE }} |
+          ${{ env.REVIEWDOG_CMD }}
 
       - name: Check linter exitcode
         env:
