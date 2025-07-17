@@ -220,7 +220,8 @@ jobs:
         uses: github/codeql-action/upload-sarif@181d5eefc20863364f96762470ba6f862bdef56b # v3.29.2
         with:
           sarif_file: ${{ env.TRIVY_OUTPUT_FILE }}
-          category: trivy-image
+          category: trivy-image-${{ matrix.arch }}
+          token: ${{ secrets.GITHUB_TOKEN }}
 
       # Install the cosign tool except on PR
       # If PR to main branch, skip.
