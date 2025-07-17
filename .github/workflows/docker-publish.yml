@@ -130,19 +130,12 @@ jobs:
       # This is used to complete the identity challenge
       # with sigstore/fulcio when running outside of PRs.
       id-token: write
+    env:
+      TRIVY_OUTPUT_FILE: trivy_report.sarif
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-
-      # Install the cosign tool except on PR
-      # If PR to main branch, skip.
-      # https://github.com/sigstore/cosign-installer
-      - name: Install cosign
-        if: ${{ github.base_ref != 'main' }}
-        uses: sigstore/cosign-installer@59acb6260d9c0ba8f4a2f9d9b48431a222b68e20 #v3.5.0
-        with:
-          cosign-release: 'v2.2.4'
 
       # Set up BuildKit Docker container builder to be able to build
       # multi-platform images and export cache
@@ -197,6 +190,46 @@ jobs:
           platforms: linux/${{ matrix.arch }}
           cache-from: type=gha,scope=linux_${{ matrix.arch }}
           cache-to: type=gha,mode=max,scope=linux_${{ matrix.arch }}
+
+      - name: Run Trivy build image scan
+        uses: aquasecurity/trivy-action@dc5a429b52fcf669ce959baa2c2dd26090d2a6c4 # v0.32.0
+        env:
+          # https://github.com/aquasecurity/trivy-action/issues/279#issuecomment-1925050674
+          TRIVY_PLATFORM: linux/${{ matrix.arch }}
+        with:
+          scan-type: image
+          # python パッケージが多いのと事前にファイルシステムでチェックしてるため secret は除外する
+          scanners: vuln
+          image-ref: ${{ fromJson(steps.meta.outputs.json).tags[0] }}
+          format: sarif
+          output: ${{ env.TRIVY_OUTPUT_FILE }}
+          severity: CRITICAL,HIGH
+          # SARIF 出力する場合、通常動作では `severity` 設定を無視してすべての脆弱性レベルが含まれてしまう。
+          # https://github.com/aquasecurity/trivy-action/issues/309#issuecomment-2057669566
+          limit-severities-for-sarif: true
+          # イメージの脆弱性はすぐの解決が難しいので失敗させない
+          exit-code: 0
+          version: v0.64.1
+          github-pat: ${{ secrets.GITHUB_TOKEN }}
+          # YAML形式では認識してくれなかった。
+          trivyignores: .github/.trivyignore
+
+      # Upload a trivy report for code scanning
+      # https://github.com/github/codeql-action/blob/v3.29.2/upload-sarif/action.yml
+      - name: Upload scaned report
+        uses: github/codeql-action/upload-sarif@181d5eefc20863364f96762470ba6f862bdef56b # v3.29.2
+        with:
+          sarif_file: ${{ env.TRIVY_OUTPUT_FILE }}
+          category: trivy-image
+
+      # Install the cosign tool except on PR
+      # If PR to main branch, skip.
+      # https://github.com/sigstore/cosign-installer
+      - name: Install cosign
+        if: ${{ github.base_ref != 'main' }}
+        uses: sigstore/cosign-installer@59acb6260d9c0ba8f4a2f9d9b48431a222b68e20 #v3.5.0
+        with:
+          cosign-release: 'v2.2.4'
 
       # Sign the resulting Docker image digest except on PRs.
       # This will only write to the public Rekor transparency log when the Docker

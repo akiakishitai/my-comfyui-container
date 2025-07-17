@@ -1,0 +1,4 @@
+# https://trivy.dev/dev/docs/configuration/filtering/#trivyignore
+
+# This image is used rootless mode.
+AVD-DS-0002
