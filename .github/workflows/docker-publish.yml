@@ -192,6 +192,9 @@ jobs:
           platforms: linux/${{ matrix.arch }}
           cache-from: type=gha,scope=linux_${{ matrix.arch }}
           cache-to: type=gha,mode=max,scope=linux_${{ matrix.arch }}
+          # Dockerデーモンにイメージを保存
+          # 単一プラットフォームにしか対応していないことに注意
+          load: ${{ github.base_ref == 'main' }}
 
       - name: Run Trivy build image scan
         uses: aquasecurity/trivy-action@dc5a429b52fcf669ce959baa2c2dd26090d2a6c4 # v0.32.0
