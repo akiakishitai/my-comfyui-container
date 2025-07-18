@@ -194,6 +194,7 @@ jobs:
           cache-to: type=gha,mode=max,scope=linux_${{ matrix.arch }}
 
       - name: Run Trivy build image scan
+        if: ${{ github.base_ref != 'main' }}
         uses: aquasecurity/trivy-action@dc5a429b52fcf669ce959baa2c2dd26090d2a6c4 # v0.32.0
         env:
           # https://github.com/aquasecurity/trivy-action/issues/279#issuecomment-1925050674
@@ -219,6 +220,7 @@ jobs:
       # Upload a trivy report for code scanning
       # https://github.com/github/codeql-action/blob/v3.29.2/upload-sarif/action.yml
       - name: Upload scaned report
+        if: ${{ github.base_ref != 'main' }}
         uses: github/codeql-action/upload-sarif@181d5eefc20863364f96762470ba6f862bdef56b # v3.29.2
         with:
           sarif_file: ${{ env.TRIVY_OUTPUT_FILE }}
