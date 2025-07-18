@@ -1,0 +1,60 @@
+name: Scan repository
+
+on:
+  push:
+    branches:
+      - develop
+  pull_request:
+    branches:
+      - main
+      - develop
+
+jobs:
+  trivy-scan:
+    name: Run Trivy filesystem scan
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      # セキュリティスキャン結果のアップロード許可
+      security-events: write
+    env:
+      TRIVY_OUTPUT_FILE: trvy_fs_report.sarif
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # Run Trivy filesystem scan for misconfigurations and secrets
+      # https://github.com/aquasecurity/trivy-action
+      - name: Run Trivy filesystem scan
+        uses: aquasecurity/trivy-action@dc5a429b52fcf669ce959baa2c2dd26090d2a6c4 # v0.32.0
+        with:
+          scan-type: fs
+          scanners: vuln,secret,misconfig
+          format: sarif
+          output: ${{ env.TRIVY_OUTPUT_FILE }}
+          severity: CRITICAL,HIGH
+          # SARIF 出力する場合、通常動作では `severity` 設定を無視してすべての脆弱性レベルが含まれてしまう。
+          # https://github.com/aquasecurity/trivy-action/issues/309#issuecomment-2057669566
+          limit-severities-for-sarif: true
+          # 脆弱性が見つかった場合は失敗させる。
+          exit-code: 1
+          version: v0.64.1
+          github-pat: ${{ secrets.GITHUB_TOKEN }}
+          # YAML形式では認識してくれなかった。
+          trivyignores: .github/.trivyignore
+
+      # Trivy で見つかった脆弱性の確認。
+      - name: Check report
+        if: ${{ !cancelled() }}
+        run: |
+          jq '.runs[].results[]' "${{ env.TRIVY_OUTPUT_FILE }}"
+
+      # Upload a trivy report for code scanning
+      # https://github.com/github/codeql-action/blob/v3.29.2/upload-sarif/action.yml
+      - name: Upload scaned report
+        if: ${{ !cancelled() }}
+        uses: github/codeql-action/upload-sarif@181d5eefc20863364f96762470ba6f862bdef56b # v3.29.2
+        with:
+          sarif_file: ${{ env.TRIVY_OUTPUT_FILE }}
+

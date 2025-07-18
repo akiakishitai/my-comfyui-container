@@ -22,17 +22,29 @@ FROM docker.io/library/busybox:1.37 AS s6
 ARG S6_OVERLAY_VERSION
 ARG S6_ROOTFS
 ARG TARGETARCH
-ARG DOWNLOAD_DIR=/tmp/s6
 ARG DOWNLOAD_URL="https://github.com/just-containers/s6-overlay/releases/download/v${S6_OVERLAY_VERSION}"
 
 WORKDIR ${S6_ROOTFS}
-RUN --mount=type=tmpfs,dst=/tmp/s6,tmpfs-size=64M \
-  <<EOS sh
-  wget -P ${DOWNLOAD_DIR} \
-    ${DOWNLOAD_URL}/s6-overlay-noarch.tar.xz \
-    ${DOWNLOAD_URL}/s6-overlay-${TARGETARCH}.tar.xz
-  tar -C ./ -xJf ${DOWNLOAD_DIR}/s6-overlay-noarch.tar.xz
-  tar -C ./ -xJf ${DOWNLOAD_DIR}/s6-overlay-${TARGETARCH}.tar.xz
+# hadolint ignore=SC2034
+RUN <<EOS sh
+  ARCH="\$(uname -m)"
+  case "${TARGETARCH:-__EMPTY__}" in
+    "amd64")
+      ARCH="x86_64" ;;
+    "arm64")
+      ARCH="aarch64" ;;
+    *)
+      echo "WARN: Unsupported architecture: ${TARGETARCH}" ;;
+  esac
+
+  DOWNLOAD_DIR="\$(mktemp -d)"
+  wget --no-check-certificate -q -T 20 -P "\${DOWNLOAD_DIR}" \
+    "${DOWNLOAD_URL}/s6-overlay-noarch.tar.xz" \
+    "${DOWNLOAD_URL}/s6-overlay-\${ARCH}.tar.xz"
+  tar -C ./ -xJf "\${DOWNLOAD_DIR}/s6-overlay-noarch.tar.xz"
+  tar -C ./ -xJf "\${DOWNLOAD_DIR}/s6-overlay-\${ARCH}.tar.xz"
+
+  rm -rf "\${DOWNLOAD_DIR}"
 EOS
 
 # ------------------------------
@@ -130,6 +142,7 @@ RUN <<EOS bash
     --branch ${COMFYUI_MANAGER_VERSION} \
     https://github.com/Comfy-Org/ComfyUI-Manager.git custom_nodes/comfyui-manager
 EOS
+
 # Install python packages
 #COPY data/pyproject.toml ${UV_PROJECT}/pyproject.toml
 RUN --mount=type=cache,dst=/root/.cache/uv,sharing=locked,id=comfy-cache \

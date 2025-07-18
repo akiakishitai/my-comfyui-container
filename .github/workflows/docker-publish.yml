@@ -1,0 +1,256 @@
+name: Publish Container Image
+
+on:
+  push:
+    branches:
+      - develop
+    # Publish semver tags as releases.
+    tags:
+      - 'v*.*.*'
+  pull_request:
+    # filter
+    paths:
+      - Containerfile
+      - .containerignore
+      - 'data/**'
+      - .github/workflows/docker-publish.yml
+    branches:
+      - main
+      - develop
+
+env:
+  # Use docker.io for Docker Hub if empty
+  REGISTRY: ghcr.io
+  # github.repository as <account>/<repo>
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  lint-containerfile:
+    name: Scan the Containerfile
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      # プルリクエスト操作許可
+      pull-requests: write
+      checks: write
+      # セキュリティスキャン結果のアップロード許可
+      security-events: write
+    env:
+      HADOLINT_OUTPUT_FILE: hadolint-report.sarif
+      CI_BRANCH: ${{ github.ref_name }}
+      CI_COMMIT: ${{ github.sha }}
+      CI_REPO_OWNER: ${{ github.repository_owner }}
+      CI_REPO_NAME: ${{ github.event.repository.name }}
+      # メッセージテキストに `ruleId` を付加
+      JQ_FILTER_FOR_SARIF: >-
+        .runs[].results[] |= (.ruleId as $rule | .message.text |= ($rule + ": " + .))
+      REVIEWDOG_CMD: >-
+        reviewdog
+        -name="${REVIEWDOG_NAME:=hadolint}"
+        -f="${REVIEWDOG_INPUT_FORMAT:=sarif}"
+        -reporter="${REVIEWDOG_REPORTER:=github-check}"
+        -filter-mode="${REVIEWDOG_FILTER_MODE:=added}"
+        -fail-level="${REVIEWDOG_FAIL_LEVEL:=warning}"
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # Install reviewdog
+      # https://github.com/reviewdog/action-setup
+      - name: Setup the reviewdog
+        uses: reviewdog/action-setup@e04ffabe3898a0af8d0fb1af00c188831c4b5893 # v1.3.2
+        with:
+          reviewdog_version: v0.20.3
+
+      # Lint a Containerfile
+      # https://github.com/hadolint/hadolint-action
+      - name: Lint a Containerfile with Hadolint
+        id: hadolint
+        continue-on-error: true
+        uses: hadolint/hadolint-action@54c9adbab1582c2ef04b2016b760714a4bfde3cf # v3.1.0
+        with:
+          dockerfile: Containerfile
+          format: sarif
+          failure-threshold: warning
+          output-file: ${{ env.HADOLINT_OUTPUT_FILE }}
+          ignore: DL3008
+
+      - name: Reviewdog
+        if: ${{ github.event_name != 'pull_request' }}
+        env:
+          REVIEWDOG_GITHUB_API_TOKEN: ${{ github.token }}
+          REVIEWDOG_FILTER_MODE: diff_context
+          REVIEWDOG_REPORTER: github-check
+        run: |
+          jq -c "${JQ_FILTER_FOR_SARIF}" ${{ env.HADOLINT_OUTPUT_FILE }} |
+          ${{ env.REVIEWDOG_CMD }}
+
+      - name: Reviewdog (Pull Request)
+        if: ${{ github.event_name == 'pull_request' }}
+        env:
+          CI_BRANCH: ${{ github.head_ref }}
+          CI_PULL_REQUEST: ${{ github.event.pull_request.number }}
+          REVIEWDOG_GITHUB_API_TOKEN: ${{ github.token }}
+          REVIEWDOG_FILTER_MODE: diff_context
+          REVIEWDOG_REPORTER: github-pr-review
+        run: |
+          jq -c "${JQ_FILTER_FOR_SARIF}" ${{ env.HADOLINT_OUTPUT_FILE }} |
+          ${{ env.REVIEWDOG_CMD }}
+
+      - name: Check linter exitcode
+        env:
+          HADOLINT_STATUS: ${{ steps.hadolint.outcome }}
+        run: |
+          case "${HADOLINT_STATUS}" in
+            'success')
+              exit 0 ;;
+            'failure')
+              exit 1 ;;
+            *)
+              exit 10 ;;
+          esac
+
+  # PR先が main ブランチの場合はレジストリにプッシュしない
+  build-multiarch:
+    name: Build and Push multi-architecture image
+    needs: lint-containerfile
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            arch: amd64
+          - os: ubuntu-24.04-arm
+            arch: arm64
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read
+      packages: write
+      # セキュリティスキャン結果のアップロード許可
+      security-events: write
+      # This is used to complete the identity challenge
+      # with sigstore/fulcio when running outside of PRs.
+      id-token: write
+    env:
+      TRIVY_OUTPUT_FILE: trivy_report.sarif
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # Set up BuildKit Docker container builder to be able to build
+      # multi-platform images and export cache
+      # https://github.com/docker/setup-buildx-action
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@6524bf65af31da8d45b59e8c27de4bd072b392f5 # v3.8.0
+
+      # Login against a Docker registry
+      # https://github.com/docker/login-action
+      - name: Log into registry ${{ env.REGISTRY }}
+        uses: docker/login-action@74a5d142397b4f367a81961eba4e8cd7edddf772 # v3.4.0
+        with:
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+          registry: ${{ env.REGISTRY }}
+
+      # Extract metadata (tags, labels) for Container
+      # https://github.com/docker/metadata-action
+      - name: Extract container metadata
+        id: meta
+        uses: docker/metadata-action@902fa8ec7d6ecbf8d84d538b9b233a880e428804 # v5.7.0
+        env:
+          DOCKER_METADATA_ANNOTATIONS_LEVELS: manifest,index
+        with:
+          # `images` property is converted to lowercase
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}},enable=${{ !startsWith(github.ref, 'refs/tags/v0.') }}
+            type=edge,branch=develop
+            type=ref,event=pr
+          labels: |
+            org.opencontainers.image.title=My ComfyUI Container
+            org.opencontainers.image.description=REST API server with ComfyUI backend
+            maintainer=${{ github.repository_owner }}
+          annotations: |
+            org.opencontainers.image.description=REST API server with ComfyUI backend with multi architecture
+
+      # Build and push Docker image with Buildx (don't push on PR)
+      # https://github.com/docker/build-push-action
+      - name: Build and push Docker image
+        id: build-and-push
+        uses: docker/build-push-action@14487ce63c7a62a4a324b0bfb37086795e31c6c1 # v6.16.0
+        with:
+          context: .
+          file: Containerfile
+          push: ${{ github.base_ref != 'main' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          annotations: ${{ steps.meta.outputs.annotations }}
+          platforms: linux/${{ matrix.arch }}
+          cache-from: type=gha,scope=linux_${{ matrix.arch }}
+          cache-to: type=gha,mode=max,scope=linux_${{ matrix.arch }}
+
+      - name: Run Trivy build image scan
+        if: ${{ github.base_ref != 'main' }}
+        uses: aquasecurity/trivy-action@dc5a429b52fcf669ce959baa2c2dd26090d2a6c4 # v0.32.0
+        env:
+          # https://github.com/aquasecurity/trivy-action/issues/279#issuecomment-1925050674
+          TRIVY_PLATFORM: linux/${{ matrix.arch }}
+        with:
+          scan-type: image
+          # python パッケージが多いのと事前にファイルシステムでチェックしてるため secret は除外する
+          scanners: vuln
+          image-ref: ${{ fromJson(steps.meta.outputs.json).tags[0] }}
+          format: sarif
+          output: ${{ env.TRIVY_OUTPUT_FILE }}
+          severity: CRITICAL,HIGH
+          # SARIF 出力する場合、通常動作では `severity` 設定を無視してすべての脆弱性レベルが含まれてしまう。
+          # https://github.com/aquasecurity/trivy-action/issues/309#issuecomment-2057669566
+          limit-severities-for-sarif: true
+          # イメージの脆弱性はすぐの解決が難しいので失敗させない
+          exit-code: 0
+          version: v0.64.1
+          github-pat: ${{ secrets.GITHUB_TOKEN }}
+          # YAML形式では認識してくれなかった。
+          trivyignores: .github/.trivyignore
+
+      # Upload a trivy report for code scanning
+      # https://github.com/github/codeql-action/blob/v3.29.2/upload-sarif/action.yml
+      - name: Upload scaned report
+        if: ${{ github.base_ref != 'main' }}
+        uses: github/codeql-action/upload-sarif@181d5eefc20863364f96762470ba6f862bdef56b # v3.29.2
+        with:
+          sarif_file: ${{ env.TRIVY_OUTPUT_FILE }}
+          category: trivy-image-${{ matrix.arch }}
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      # Install the cosign tool except on PR
+      # If PR to main branch, skip.
+      # https://github.com/sigstore/cosign-installer
+      - name: Install cosign
+        if: ${{ github.base_ref != 'main' }}
+        uses: sigstore/cosign-installer@59acb6260d9c0ba8f4a2f9d9b48431a222b68e20 #v3.5.0
+        with:
+          cosign-release: 'v2.2.4'
+
+      # Sign the resulting Docker image digest except on PRs.
+      # This will only write to the public Rekor transparency log when the Docker
+      # repository is public to avoid leaking data.  If you would like to publish
+      # transparency data even for private images, pass --force to cosign below.
+      # If PR to main branch, skip.
+      # https://github.com/sigstore/cosign
+      - name: Sign the published Docker image
+        if: ${{ github.base_ref != 'main' }}
+        env:
+          # https://docs.github.com/en/actions/security-guides/security-hardening-for-github-actions#using-an-intermediate-environment-variable
+          TAGS: ${{ steps.meta.outputs.tags }}
+          DIGEST: ${{ steps.build-and-push.outputs.digest }}
+        # This step uses the identity token to provision an ephemeral certificate
+        # against the sigstore community Fulcio instance.
+        run: |
+          echo "${TAGS}" | while read -r image; do
+            cosign sign --yes "${image}@${DIGEST}"
+          done
