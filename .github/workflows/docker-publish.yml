@@ -23,6 +23,13 @@ env:
   REGISTRY: ghcr.io
   # github.repository as <account>/<repo>
   IMAGE_NAME: ${{ github.repository }}
+  CONTAINER_CONFIG: >-
+    {
+      "registry": {
+        "staging": "ttl.sh",
+        "production": "ghcr.io"
+      }
+    }
 
 jobs:
   lint-containerfile:
@@ -134,6 +141,7 @@ jobs:
       id-token: write
     env:
       TRIVY_OUTPUT_FILE: trivy_report.sarif
+      OCI_ARCHIVE: oci-${{ github.sha }}.tar
 
     steps:
       - name: Checkout repository
@@ -163,7 +171,7 @@ jobs:
           DOCKER_METADATA_ANNOTATIONS_LEVELS: manifest,index
         with:
           # `images` property is converted to lowercase
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          images: ${{ env.IMAGE_NAME }}
           tags: |
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
@@ -179,22 +187,26 @@ jobs:
 
       # Build and push Docker image with Buildx (don't push on PR)
       # https://github.com/docker/build-push-action
-      - name: Build and push Docker image
+      - name: Build Docker image
         id: build-and-push
         uses: docker/build-push-action@14487ce63c7a62a4a324b0bfb37086795e31c6c1 # v6.16.0
+        env:
+          DOCKER_BUILD_RECORD_RETENTION_DAYS: 5
+          IMAGE_REF_NAME: ${{ steps.meta.outputs.version }}
         with:
           context: .
           file: Containerfile
-          push: ${{ github.base_ref != 'main' }}
+          push: false
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           annotations: ${{ steps.meta.outputs.annotations }}
           platforms: linux/${{ matrix.arch }}
+          # https://docs.docker.com/build/exporters/oci-docker/
+          outputs: 'type=oci,dest=${{ env.OCI_ARCHIVE }},annotation.org.opencontainers.image.ref.name=${{ env.IMAGE_REF_NAME }}-${{ matrix.arch }}'
           cache-from: type=gha,scope=linux_${{ matrix.arch }}
           cache-to: type=gha,mode=max,scope=linux_${{ matrix.arch }}
 
       - name: Run Trivy build image scan
-        if: ${{ github.base_ref != 'main' }}
         uses: aquasecurity/trivy-action@dc5a429b52fcf669ce959baa2c2dd26090d2a6c4 # v0.32.0
         env:
           # https://github.com/aquasecurity/trivy-action/issues/279#issuecomment-1925050674
@@ -203,7 +215,7 @@ jobs:
           scan-type: image
           # python パッケージが多いのと事前にファイルシステムでチェックしてるため secret は除外する
           scanners: vuln
-          image-ref: ${{ fromJson(steps.meta.outputs.json).tags[0] }}
+          input: ${{ env.OCI_ARCHIVE }}
           format: sarif
           output: ${{ env.TRIVY_OUTPUT_FILE }}
           severity: CRITICAL,HIGH
@@ -220,18 +232,45 @@ jobs:
       # Upload a trivy report for code scanning
       # https://github.com/github/codeql-action/blob/v3.29.2/upload-sarif/action.yml
       - name: Upload scaned report
-        if: ${{ github.base_ref != 'main' }}
         uses: github/codeql-action/upload-sarif@181d5eefc20863364f96762470ba6f862bdef56b # v3.29.2
         with:
           sarif_file: ${{ env.TRIVY_OUTPUT_FILE }}
           category: trivy-image-${{ matrix.arch }}
           token: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Login to ${{ env.REGISTRY }} on Skopeo
+        id: login-skopeo
+        if: ${{ github.event_name != 'pull_request' }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          skopeo login ${{ env.REGISTRY }} --username ${{ github.repository_owner }} --password "${GITHUB_TOKEN}"
+
+      - name: Push container image to ${{ env.REGISTRY }}
+        if: ${{ steps.login-skopeo.conclusion == 'success' }}
+        env:
+          DOCKER_REF: "${{ env.REGISTRY }}/${{ fromJSON(steps.meta.outputs.json).tags[0] }}"
+        run: |
+          skopeo copy oci-archive:${{ env.OCI_ARCHIVE }} "docker://${DOCKER_REF}"
+          echo "Pushed: ${DOCKER_REF}"
+
+      - name: Push container image to ttl.sh
+        if: ${{ github.event_name == 'pull_request' }}
+        run: |
+          DOCKER_REF="${{ github.run_id }}-${{ github.run_attempt }}:1h"
+          skopeo copy oci-archive:${{ env.OCI_ARCHIVE }} "docker://${DOCKER_REF}"
+          echo "Pushed: ${DOCKER_REF}"
+
+      - name: Logout on Skopeo
+        if: ${{ (! cancelled()) && steps.login-skopeo.outcome == 'success' }}
+        run: skopeo logout ${{ env.REGISTRY }}
+
       # Install the cosign tool except on PR
       # If PR to main branch, skip.
       # https://github.com/sigstore/cosign-installer
       - name: Install cosign
-        if: ${{ github.base_ref != 'main' }}
+        id: setup-cosign
+        if: ${{ ! always() }}
         uses: sigstore/cosign-installer@59acb6260d9c0ba8f4a2f9d9b48431a222b68e20 #v3.5.0
         with:
           cosign-release: 'v2.2.4'
@@ -243,7 +282,7 @@ jobs:
       # If PR to main branch, skip.
       # https://github.com/sigstore/cosign
       - name: Sign the published Docker image
-        if: ${{ github.base_ref != 'main' }}
+        if: ${{ steps.setup-cosign.outcome == 'success' }}
         env:
           # https://docs.github.com/en/actions/security-guides/security-hardening-for-github-actions#using-an-intermediate-environment-variable
           TAGS: ${{ steps.meta.outputs.tags }}
