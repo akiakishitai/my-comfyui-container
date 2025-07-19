@@ -240,7 +240,7 @@ jobs:
 
       - name: Login to ${{ env.REGISTRY }} on Skopeo
         id: login-skopeo
-        if: ${{ github.event_name != 'pull_request' }}
+        if: ${{ github.base_ref != 'main' }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -255,7 +255,7 @@ jobs:
           echo "Pushed: ${DOCKER_REF}"
 
       - name: Push container image to ttl.sh
-        if: ${{ github.event_name == 'pull_request' }}
+        if: ${{ ! always() }}
         run: |
           DOCKER_REF="ttl.sh/${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.arch }}:1h"
           skopeo copy oci:${{ env.OCI_EXPORT }} "docker://${DOCKER_REF}"
