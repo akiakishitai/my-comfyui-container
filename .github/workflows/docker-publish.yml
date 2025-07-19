@@ -141,7 +141,7 @@ jobs:
       id-token: write
     env:
       TRIVY_OUTPUT_FILE: trivy_report.sarif
-      OCI_ARCHIVE: oci-${{ github.sha }}.tar
+      OCI_EXPORT: oci-${{ github.run_id }}
 
     steps:
       - name: Checkout repository
@@ -202,7 +202,7 @@ jobs:
           annotations: ${{ steps.meta.outputs.annotations }}
           platforms: linux/${{ matrix.arch }}
           # https://docs.docker.com/build/exporters/oci-docker/
-          outputs: 'type=oci,dest=${{ env.OCI_ARCHIVE }},annotation.org.opencontainers.image.ref.name=${{ env.IMAGE_REF_NAME }}-${{ matrix.arch }}'
+          outputs: 'type=oci,dest=${{ env.OCI_EXPORT }},tar=false,annotation.org.opencontainers.image.ref.name=${{ env.IMAGE_REF_NAME }}-${{ matrix.arch }}'
           cache-from: type=gha,scope=linux_${{ matrix.arch }}
           cache-to: type=gha,mode=max,scope=linux_${{ matrix.arch }}
 
@@ -215,7 +215,7 @@ jobs:
           scan-type: image
           # python パッケージが多いのと事前にファイルシステムでチェックしてるため secret は除外する
           scanners: vuln
-          input: ${{ env.OCI_ARCHIVE }}
+          input: ${{ env.OCI_EXPORT }}
           format: sarif
           output: ${{ env.TRIVY_OUTPUT_FILE }}
           severity: CRITICAL,HIGH
@@ -251,14 +251,14 @@ jobs:
         env:
           DOCKER_REF: "${{ env.REGISTRY }}/${{ fromJSON(steps.meta.outputs.json).tags[0] }}"
         run: |
-          skopeo copy oci-archive:${{ env.OCI_ARCHIVE }} "docker://${DOCKER_REF}"
+          skopeo copy oci:${{ env.OCI_EXPORT }} "docker://${DOCKER_REF}"
           echo "Pushed: ${DOCKER_REF}"
 
       - name: Push container image to ttl.sh
         if: ${{ github.event_name == 'pull_request' }}
         run: |
           DOCKER_REF="${{ github.run_id }}-${{ github.run_attempt }}:1h"
-          skopeo copy oci-archive:${{ env.OCI_ARCHIVE }} "docker://${DOCKER_REF}"
+          skopeo copy oci:${{ env.OCI_EXPORT }} "docker://${DOCKER_REF}"
           echo "Pushed: ${DOCKER_REF}"
 
       - name: Logout on Skopeo
