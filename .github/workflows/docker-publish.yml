@@ -111,10 +111,54 @@ jobs:
               exit 10 ;;
           esac
 
+  # コンテナイメージ用のメタデータを出力
+  container-meta:
+    name: Outputs docker metadata
+    runs-on: ubuntu-24.04-arm
+    outputs:
+      version: ${{ steps.meta.outputs.version }}
+      tags: ${{ steps.meta.outputs.tags }}
+      labels: ${{ steps.meta.outputs.labels }}
+      annotations: ${{ steps.meta.outputs.annotations }}
+      image_ref: ${{ steps.extract.outputs.image_ref }}
+    permissions:
+      contents: read
+
+    steps:
+      # Extract metadata (tags, labels) for Container
+      # https://github.com/docker/metadata-action
+      - name: Extract container metadata
+        id: meta
+        uses: docker/metadata-action@902fa8ec7d6ecbf8d84d538b9b233a880e428804 # v5.7.0
+        env:
+          DOCKER_METADATA_ANNOTATIONS_LEVELS: manifest,index
+        with:
+          # `images` property is converted to lowercase
+          images: ${{ env.IMAGE_NAME }}
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}},enable=${{ !startsWith(github.ref, 'refs/tags/v0.') }}
+            type=edge,branch=develop
+            type=ref,event=pr
+          labels: |
+            org.opencontainers.image.title=My ComfyUI Container
+            org.opencontainers.image.description=REST API server with ComfyUI backend
+            maintainer=${{ github.repository_owner }}
+          annotations: |
+            org.opencontainers.image.description=REST API server with ComfyUI backend with multi architecture
+
+      - name: Extract image reference
+        id: extract
+        run: |
+          echo "image_ref=${{ fromJSON(steps.meta.outputs.json).tags[0] }}" >> "$GITHUB_OUTPUT"
+
   # PR先が main ブランチの場合はレジストリにプッシュしない
   build-multiarch:
     name: Build and Push multi-architecture image
-    needs: lint-containerfile
+    needs:
+      - lint-containerfile
+      - container-meta
     strategy:
       fail-fast: false
       matrix:
@@ -156,29 +200,6 @@ jobs:
           password: ${{ github.token }}
           registry: ${{ env.REGISTRY }}
 
-      # Extract metadata (tags, labels) for Container
-      # https://github.com/docker/metadata-action
-      - name: Extract container metadata
-        id: meta
-        uses: docker/metadata-action@902fa8ec7d6ecbf8d84d538b9b233a880e428804 # v5.7.0
-        env:
-          DOCKER_METADATA_ANNOTATIONS_LEVELS: manifest,index
-        with:
-          # `images` property is converted to lowercase
-          images: ${{ env.IMAGE_NAME }}
-          tags: |
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
-            type=semver,pattern={{major}},enable=${{ !startsWith(github.ref, 'refs/tags/v0.') }}
-            type=edge,branch=develop
-            type=ref,event=pr
-          labels: |
-            org.opencontainers.image.title=My ComfyUI Container
-            org.opencontainers.image.description=REST API server with ComfyUI backend
-            maintainer=${{ github.repository_owner }}
-          annotations: |
-            org.opencontainers.image.description=REST API server with ComfyUI backend with multi architecture
-
       # Build and push Docker image with Buildx (don't push on PR)
       # https://github.com/docker/build-push-action
       - name: Build Docker image
@@ -187,14 +208,14 @@ jobs:
         env:
           DOCKER_BUILD_RECORD_RETENTION_DAYS: 5
           CONTAINER_OUTPUTS_ANNOTATION: >
-            annotation.org.opencontainers.image.ref.name=${{ steps.meta.outputs.version }}-${{ matrix.arch }}
+            annotation.org.opencontainers.image.ref.name=${{ needs.container-meta.outputs.version }}-${{ matrix.arch }}
         with:
           context: .
           file: Containerfile
           push: false
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          annotations: ${{ steps.meta.outputs.annotations }}
+          tags: ${{ needs.container-meta.outputs.tags }}
+          labels: ${{ needs.container-meta.outputs.labels }}
+          annotations: ${{ needs.container-meta.outputs.annotations }}
           platforms: linux/${{ matrix.arch }}
           # https://docs.docker.com/build/exporters/oci-docker/
           outputs: 'type=oci,dest=${{ env.OCI_EXPORT }},tar=false,${{ env.CONTAINER_OUTPUTS_ANNOTATION }}'
@@ -246,7 +267,7 @@ jobs:
       - name: Push a container image to ${{ env.REGISTRY }}
         if: ${{ steps.login-skopeo.conclusion == 'success' }}
         env:
-          CONTAINER_REF: '${{ env.REGISTRY }}/${{ fromJSON(steps.meta.outputs.json).tags[0] }}-${{ matrix.arch }}'
+          CONTAINER_REF: '${{ env.REGISTRY }}/${{ needs.container-meta.outputs.image_ref }}-${{ matrix.arch }}'
         run: |
           skopeo copy oci:${{ env.OCI_EXPORT }} "docker://${CONTAINER_REF}"
 
@@ -285,7 +306,7 @@ jobs:
         if: ${{ steps.setup-cosign.outcome == 'success' }}
         env:
           # https://docs.github.com/en/actions/security-guides/security-hardening-for-github-actions#using-an-intermediate-environment-variable
-          TAGS: ${{ steps.meta.outputs.tags }}
+          TAGS: ${{ needs.container-meta.outputs.tags }}
           DIGEST: ${{ steps.build-and-push.outputs.digest }}
         # This step uses the identity token to provision an ephemeral certificate
         # against the sigstore community Fulcio instance.
