@@ -144,9 +144,11 @@ jobs:
       TRIVY_OUTPUT_FILE: trivy_report.sarif
     outputs:
       # プッシュしたアーキテクチャごとのイメージ List
-      pushed_tags: |
-        ${{ steps.export-meta.outputs.pushed_amd64 }}
-        ${{ steps.export-meta.outputs.pushed_arm64 }}
+      pushed_tags: >
+        [
+          "${{ steps.export-meta.outputs.pushed_amd64 }}",
+          "${{ steps.export-meta.outputs.pushed_arm64 }}"
+        ]
 
     steps:
       - name: Checkout repository
@@ -342,15 +344,17 @@ jobs:
         run: |
           buildah manifest create ${{ env.MANIFEST_NAME }}
 
+          pushed_tags=$(echo "${PUSHED_TAGS}" | jq -r '.[]')
           while read -r image; do
             buildah manifest add \
               --annotation "org.opencontainers.image.description=REST API server with ComfyUI backend with multi architecture" \
               "${MANIFEST_NAME}" \
               "docker://${image}"
-          done <<< "${PUSHED_TAGS}"
+          done <<< "${pushed_tags}"
 
           buildah manifest push --all "${MANIFEST_NAME}" "${MP_IMAGE}"
 
+          echo "pushed_tags=${pushed_tags}" >> "$GITHUB_OUTPUT"
           echo "mp_image=${MP_IMAGE}" >> "$GITHUB_OUTPUT"
 
       # 複数のタグを付与する場合の処理
