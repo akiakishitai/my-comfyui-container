@@ -161,7 +161,7 @@ jobs:
         id: meta
         uses: docker/metadata-action@902fa8ec7d6ecbf8d84d538b9b233a880e428804 # v5.7.0
         env:
-          DOCKER_METADATA_ANNOTATIONS_LEVELS: manifest,index
+          DOCKER_METADATA_ANNOTATIONS_LEVELS: manifest
         with:
           # `images` property is converted to lowercase
           images: ${{ env.IMAGE_NAME }}
@@ -205,7 +205,7 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           annotations: |-
             ${{ steps.meta.outputs.annotations }}
-            index:${{ env.CONTAINER_IMAGE_REF }}
+            manifest:${{ env.CONTAINER_IMAGE_REF }}
           platforms: linux/${{ matrix.arch }}
           # https://docs.docker.com/build/exporters/oci-docker/
           cache-from: type=gha,scope=linux_${{ matrix.arch }}
