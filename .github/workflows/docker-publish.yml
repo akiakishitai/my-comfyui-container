@@ -143,12 +143,10 @@ jobs:
     env:
       TRIVY_OUTPUT_FILE: trivy_report.sarif
     outputs:
-      # プッシュしたアーキテクチャごとのイメージ List
-      pushed_tags: >
-        [
-          "${{ steps.export-meta.outputs.pushed_amd64 }}",
-          "${{ steps.export-meta.outputs.pushed_arm64 }}"
-        ]
+      # プッシュしたアーキテクチャごとのイメージ
+      # JSON 形式などでまとめようとすると1つしか代入されなかった。
+      tag_amd64: ${{ steps.export-meta.outputs.pushed_amd64 }}
+      tag_arm64: ${{ steps.export-meta.outputs.pushed_arm64 }}
 
     steps:
       - name: Checkout repository
@@ -338,7 +336,11 @@ jobs:
         id: manifest
         env:
           MANIFEST_NAME: 'mylist:${{ steps.meta.outputs.version }}'
-          PUSHED_TAGS: ${{ needs.build-image.outputs.pushed_tags }}
+          PUSHED_TAGS: >
+            [
+            "${{ needs.build-image.outputs.tag_amd64 }}",
+            "${{ needs.build-image.outputs.tag_arm64 }}"
+            ]
           # 目的のマルチプラットフォームイメージ
           MP_IMAGE: ${{ fromJSON(steps.meta.outputs.json).tags[0] }}
         run: |
@@ -346,13 +348,14 @@ jobs:
 
           pushed_tags=$(echo "${PUSHED_TAGS}" | jq -r '.[]')
           while read -r image; do
+            echo "add ${image}"
             buildah manifest add \
               --annotation "org.opencontainers.image.description=REST API server with ComfyUI backend with multi architecture" \
               "${MANIFEST_NAME}" \
               "docker://${image}"
           done <<< "${pushed_tags}"
 
-          buildah manifest push --all "${MANIFEST_NAME}" "${MP_IMAGE}"
+          buildah manifest push --all "${MANIFEST_NAME}" "docker://${MP_IMAGE}"
 
           echo "pushed_tags=${pushed_tags}" >> "$GITHUB_OUTPUT"
           echo "mp_image=${MP_IMAGE}" >> "$GITHUB_OUTPUT"
