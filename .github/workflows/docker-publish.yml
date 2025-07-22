@@ -304,7 +304,7 @@ jobs:
     name: Post pushed images
     if: ${{ github.base_ref != 'main' }}
     needs: build-image
-    runs-on: ubuntu24.04
+    runs-on: ubuntu-24.04
     permissions:
       contents: read
       packages: write
