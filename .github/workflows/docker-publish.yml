@@ -308,15 +308,18 @@ jobs:
     permissions:
       contents: read
       packages: write
+    timeout-minutes: 5
 
     steps:
       # https://github.com/redhat-actions/podman-login/tree/v1.7
       - name: Login to ${{ env.REGISTRY }} with Podman
         id: login
         uses: redhat-actions/podman-login@4934294ad0449894bcd1e9f191899d7292469603 # v1.7
+        env:
+          LOGIN_REGISTRY: ${{ format('{0}/{1}', env.REGISTRY, github.repository_owner) }}
         with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.repository_owner }}
+          registry: ${{ env.LOGIN_REGISTRY }}
+          username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
       # Extract metadata (tags, labels) for Container
