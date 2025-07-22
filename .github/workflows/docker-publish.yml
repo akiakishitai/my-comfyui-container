@@ -23,6 +23,13 @@ env:
   REGISTRY: ghcr.io
   # github.repository as <account>/<repo>
   IMAGE_NAME: ${{ github.repository }}
+  # Input for docker/metadata-action:tags
+  METADATA_INPUT_TAGS: |
+    type=semver,pattern={{version}}
+    type=semver,pattern={{major}}.{{minor}}
+    type=semver,pattern={{major}},enable=${{ !startsWith(github.ref, 'refs/tags/v0.') }}
+    type=edge,branch=develop
+    type=ref,event=pr
 
 jobs:
   lint-containerfile:
@@ -112,8 +119,8 @@ jobs:
           esac
 
   # PR先が main ブランチの場合はレジストリにプッシュしない
-  build-multiarch:
-    name: Build and Push multi-architecture image
+  build-image:
+    name: Build and Push the image
     needs:
       - lint-containerfile
     strategy:
@@ -135,6 +142,11 @@ jobs:
       id-token: write
     env:
       TRIVY_OUTPUT_FILE: trivy_report.sarif
+    outputs:
+      # プッシュしたアーキテクチャごとのイメージ List
+      pushed_tags: |
+        ${{ steps.export-meta.outputs.pushed_amd64 }}
+        ${{ steps.export-meta.outputs.pushed_arm64 }}
 
     steps:
       - name: Checkout repository
@@ -166,26 +178,19 @@ jobs:
           # `images` property is converted to lowercase
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           flavor: suffix=-${{ matrix.arch }}
-          tags: |
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
-            type=semver,pattern={{major}},enable=${{ !startsWith(github.ref, 'refs/tags/v0.') }}
-            type=edge,branch=develop
-            type=ref,event=pr
+          tags: ${{ env.METADATA_INPUT_TAGS }}
           labels: |
             org.opencontainers.image.title=My ComfyUI Container
             org.opencontainers.image.description=REST API server with ComfyUI backend
             maintainer=${{ github.repository_owner }}
-          annotations: |
-            org.opencontainers.image.description=REST API server with ComfyUI backend with multi architecture
 
+      # 後々のステップで使う、代表となるタグを抽出
       - name: Append metadata
         id: meta-append
         env:
-          IMAGE_VERSION: ${{ fromJSON(steps.meta.outputs.json).tags[0] }}
+          SINGLE_PUSH_TO: ${{ fromJSON(steps.meta.outputs.json).tags[0] }}
         run: |
-          echo "ref_name=${IMAGE_VERSION}" >> "$GITHUB_OUTPUT"
-          echo "push_to=${{ env.REGISTRY }}/${IMAGE_VERSION}" >> "$GITHUB_OUTPUT"
+          echo "push_to=${SINGLE_PUSH_TO}" >> "$GITHUB_OUTPUT"
 
       # Build and push Docker image with Buildx (don't push on PR)
       # https://github.com/docker/build-push-action
@@ -195,7 +200,7 @@ jobs:
         env:
           DOCKER_BUILD_RECORD_RETENTION_DAYS: 5
           CONTAINER_IMAGE_REF: >
-            org.opencontainers.image.ref.name=${{ steps.meta-append.outputs.ref_name }}
+            org.opencontainers.image.ref.name=${{ steps.meta-append.outputs.push_to }}
         with:
           context: .
           file: Containerfile
@@ -222,7 +227,7 @@ jobs:
           scan-type: image
           # python パッケージが多いのと事前にファイルシステムでチェックしてるため secret は除外する
           scanners: vuln
-          image-ref: ${{ steps.meta-append.outputs.ref_name }}
+          image-ref: ${{ steps.meta-append.outputs.push_to }}
           format: sarif
           output: ${{ env.TRIVY_OUTPUT_FILE }}
           severity: CRITICAL,HIGH
@@ -246,28 +251,24 @@ jobs:
           category: trivy-image-${{ matrix.arch }}
           token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Login to ${{ env.REGISTRY }} on Skopeo
-        id: login-skopeo
-        if: ${{ steps.trivy.outcome == 'success' }}
+      # ジョブ出力用の変数設定
+      # マトリックスジョブに対応するため、出力変数名にマトリックスの値を使用。
+      - name: Export the ${{ matrix.arch }} tag
+        id: export-meta
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: >-
-          skopeo login ${{ env.REGISTRY }}
-          --username ${{ github.repository_owner }}
-          --password "${GH_TOKEN}"
+          PUSH_TO: ${{ steps.meta-append.outputs.push_to }}
+        run: |
+          echo "pushed_${{ matrix.arch }}=${PUSH_TO}" >> "$GITHUB_OUTPUT"
 
-      - name: Defined to a multi-platform image
-        if: ${{ steps.login-skopeo.conclusion == 'success' }}
+      # プッシュしたイメージの情報表示
+      - name: Inspect a pushed image
+        if: ${{ steps.trivy.outcome == 'success' }}
         env:
           CONTAINER_PUSH_TO: ${{ steps.meta-append.outputs.push_to }}
         run: |
           echo "--- Pushed Info ---"
           echo "Pushed: ${CONTAINER_PUSH_TO}"
           skopeo inspect "docker://${CONTAINER_PUSH_TO}" | jq 'del(.Layers, .LayersData, .Env)'
-
-      - name: Logout on Skopeo
-        if: ${{ (! cancelled()) && steps.login-skopeo.outcome == 'success' }}
-        run: skopeo logout ${{ env.REGISTRY }}
 
       # Install the cosign tool except on PR
       # If PR to main branch, skip.
@@ -297,3 +298,76 @@ jobs:
           echo "${TAGS}" | while read -r image; do
             cosign sign --yes "${image}@${DIGEST}"
           done
+
+  # プッシュしたイメージに対する処理
+  post-pushed-images:
+    name: Post pushed images
+    if: ${{ github.base_ref != 'main' }}
+    needs: build-image
+    runs-on: ubuntu24.04
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      # https://github.com/redhat-actions/podman-login/tree/v1.7
+      - name: Login to ${{ env.REGISTRY }} with Podman
+        id: login
+        uses: redhat-actions/podman-login@4934294ad0449894bcd1e9f191899d7292469603 # v1.7
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.repository_owner }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Extract metadata (tags, labels) for Container
+      # https://github.com/docker/metadata-action
+      - name: Extract container metadata
+        id: meta
+        uses: docker/metadata-action@902fa8ec7d6ecbf8d84d538b9b233a880e428804 # v5.7.0
+        with:
+          # `images` property is converted to lowercase
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: ${{ env.METADATA_INPUT_TAGS }}
+
+      - name: Create a multi-platform manifest
+        id: manifest
+        env:
+          MANIFEST_NAME: 'mylist:${{ steps.meta.outputs.version }}'
+          PUSHED_TAGS: ${{ needs.build-image.outputs.pushed_tags }}
+          # 目的のマルチプラットフォームイメージ
+          MP_IMAGE: ${{ fromJSON(steps.meta.outputs.json).tags[0] }}
+        run: |
+          buildah manifest create ${{ env.MANIFEST_NAME }}
+
+          while read -r image; do
+            buildah manifest add \
+              --annotation "org.opencontainers.image.description=REST API server with ComfyUI backend with multi architecture" \
+              "${MANIFEST_NAME}" \
+              "docker://${image}"
+          done <<< "${PUSHED_TAGS}"
+
+          buildah manifest push --all "${MANIFEST_NAME}" "${MP_IMAGE}"
+
+          echo "mp_image=${MP_IMAGE}" >> "$GITHUB_OUTPUT"
+
+      # 複数のタグを付与する場合の処理
+      - name: Append tags with skopeo
+        env:
+          TAGS: ${{ fromJSON(steps.meta.outputs.json).tags }}
+        run: |
+          remain_tags="$(jq -r 'del(.[0])' <<< ${TAGS})"
+          while read -r tag; do
+            skopeo copy "docker://${{ steps.manifest.outputs.mp_image }}" "docker://${tag}"
+          done <<< "${remain_tags}"
+
+      # マルチプラットフォームイメージの確認
+      - name: Check the multi-platform image
+        env:
+          MP_IMAGE: ${{ steps.manifest.outputs.mp_image }}
+        run: |
+          echo "--- Check manifest ---"
+          buildah manifest inspect "${MP_IMAGE}"
+
+          echo "--- Check image ---"
+          skopeo inspect "docker://${MP_IMAGE}"
+
