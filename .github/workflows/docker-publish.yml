@@ -178,11 +178,30 @@ jobs:
       id-token: write
     env:
       TRIVY_OUTPUT_FILE: trivy_report.sarif
-      OCI_EXPORT: oci-${{ github.run_id }}
+      DOCKER_OUTPUT_DIR: /mnt/oci
+      # 出力するOCIレイアウトイメージのパス。step 内で値を定義する。
+      OCI_EXPORT: ''
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+
+      # コンテナイメージ出力用の tmpfs ディスクを作成する
+      - name: Set up tmpfs for output image
+        id: tmpfs
+        run: |
+          echo "--- Create tmpfs ---"
+          sudo mkdir ${{ env.DOCKER_OUTPUT_DIR }}
+          sudo mount -t tmpfs -o size=7G tmpfs ${{ env.DOCKER_OUTPUT_DIR }}
+          echo ""
+          echo "--- Disk info ---"
+          df -h
+          sudo lsblk -d -o name,rota
+          echo ""
+          echo "--- CPU/Mem info ---"
+          free -h
+
+          echo "OCI_EXPORT=${{ env.DOCKER_OUTPUT_DIR }}/oci-${{ github.run_id }}" >> "$GITHUB_ENV"
 
       # Set up BuildKit Docker container builder to be able to build
       # multi-platform images and export cache
