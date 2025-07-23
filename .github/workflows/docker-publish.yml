@@ -28,6 +28,8 @@ jobs:
   lint-containerfile:
     name: Scan the Containerfile
     runs-on: ubuntu-24.04
+    # maximum run time: 2 min
+    timeout-minutes: 2
     permissions:
       contents: read
       # プルリクエスト操作許可
@@ -115,6 +117,8 @@ jobs:
   container-meta:
     name: Outputs docker metadata
     runs-on: ubuntu-24.04-arm
+    # maximum run time: 1 min
+    timeout-minutes: 1
     outputs:
       version: ${{ steps.meta.outputs.version }}
       tags: ${{ steps.meta.outputs.tags }}
@@ -168,6 +172,8 @@ jobs:
           - os: ubuntu-24.04-arm
             arch: arm64
     runs-on: ${{ matrix.os }}
+    # maximum run time: 10 min
+    timeout-minutes: 10
     permissions:
       contents: read
       packages: write
@@ -222,6 +228,7 @@ jobs:
       - name: Build Docker image
         id: build-and-push
         uses: docker/build-push-action@14487ce63c7a62a4a324b0bfb37086795e31c6c1 # v6.16.0
+        timeout-minutes: 5
         env:
           DOCKER_BUILD_RECORD_RETENTION_DAYS: 5
           CONTAINER_OUTPUTS_ANNOTATION: >
@@ -250,6 +257,7 @@ jobs:
 
       - name: Run Trivy build image scan
         uses: aquasecurity/trivy-action@dc5a429b52fcf669ce959baa2c2dd26090d2a6c4 # v0.32.0
+        timeout-minutes: 3
         env:
           # https://github.com/aquasecurity/trivy-action/issues/279#issuecomment-1925050674
           TRIVY_PLATFORM: linux/${{ matrix.arch }}
@@ -283,6 +291,7 @@ jobs:
       # Push the build-image with an architecture-tag
       - name: Push a container image to ${{ env.REGISTRY }}
         if: ${{ github.base_ref != 'main' }}
+        timeout-minutes: 1
         env:
           CONTAINER_REF: '${{ env.REGISTRY }}/${{ needs.container-meta.outputs.image_ref }}-${{ matrix.arch }}'
         run: |
