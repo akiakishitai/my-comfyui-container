@@ -236,9 +236,18 @@ jobs:
           annotations: ${{ needs.container-meta.outputs.annotations }}
           platforms: linux/${{ matrix.arch }}
           # https://docs.docker.com/build/exporters/oci-docker/
-          outputs: 'type=oci,dest=${{ env.OCI_EXPORT }},tar=false,${{ env.CONTAINER_OUTPUTS_ANNOTATION }}'
+          outputs: |
+            type=oci,dest=${{ env.OCI_EXPORT }},tar=false,compression=zstd,compression-level=3,${{ env.CONTAINER_OUTPUTS_ANNOTATION }}
           cache-from: type=gha,scope=linux_${{ matrix.arch }}
           cache-to: type=gha,mode=max,scope=linux_${{ matrix.arch }}
+
+      - name: Check the output image
+        run: |
+          echo "--- Size ---"
+          du -h -s ${{ env.OCI_EXPORT }}
+
+          echo "" "--- Inspect image ---"
+          skopeo inspect oci:${{ env.OCI_EXPORT }}
 
       - name: Run Trivy build image scan
         uses: aquasecurity/trivy-action@dc5a429b52fcf669ce959baa2c2dd26090d2a6c4 # v0.32.0
@@ -272,12 +281,17 @@ jobs:
           category: trivy-image-${{ matrix.arch }}
           token: ${{ secrets.GITHUB_TOKEN }}
 
+      # Push the build-image with an architecture-tag
       - name: Push a container image to ${{ env.REGISTRY }}
         if: ${{ github.base_ref != 'main' }}
         env:
           CONTAINER_REF: '${{ env.REGISTRY }}/${{ needs.container-meta.outputs.image_ref }}-${{ matrix.arch }}'
         run: |
-          skopeo copy oci:${{ env.OCI_EXPORT }} "docker://${CONTAINER_REF}"
+          skopeo copy \
+            --dest-compress-format zstd \
+            --dest-compress-level 10 \
+            oci:${{ env.OCI_EXPORT }} \
+            "docker://${CONTAINER_REF}"
 
           echo "--- Pushed Info ---"
           echo "Pushed: ${CONTAINER_REF}"
