@@ -212,7 +212,6 @@ jobs:
       # Login against a Docker registry
       # https://github.com/docker/login-action
       - name: Log into registry ${{ env.REGISTRY }}
-        if: ${{ ! always() }}
         uses: docker/login-action@74a5d142397b4f367a81961eba4e8cd7edddf772 # v3.4.0
         with:
           username: ${{ github.actor }}
@@ -273,18 +272,8 @@ jobs:
           category: trivy-image-${{ matrix.arch }}
           token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Login to ${{ env.REGISTRY }} on Skopeo
-        id: login-skopeo
-        if: ${{ github.base_ref != 'main' }}
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: >-
-          skopeo login ${{ env.REGISTRY }}
-          --username ${{ github.repository_owner }}
-          --password "${GH_TOKEN}"
-
       - name: Push a container image to ${{ env.REGISTRY }}
-        if: ${{ steps.login-skopeo.conclusion == 'success' }}
+        if: ${{ github.base_ref != 'main' }}
         env:
           CONTAINER_REF: '${{ env.REGISTRY }}/${{ needs.container-meta.outputs.image_ref }}-${{ matrix.arch }}'
         run: |
@@ -300,10 +289,6 @@ jobs:
           DOCKER_REF="ttl.sh/${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.arch }}:1h"
           skopeo copy oci:${{ env.OCI_EXPORT }} "docker://${DOCKER_REF}"
           echo "Pushed: ${DOCKER_REF}"
-
-      - name: Logout on Skopeo
-        if: ${{ (! cancelled()) && steps.login-skopeo.outcome == 'success' }}
-        run: skopeo logout ${{ env.REGISTRY }}
 
       # Install the cosign tool except on PR
       # If PR to main branch, skip.
