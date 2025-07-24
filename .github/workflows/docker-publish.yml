@@ -411,8 +411,6 @@ jobs:
         run: |
           buildah manifest push \
             --all \
-            --compression-format zstd \
-            --compression-level 10 \
             ${{ env.MANIFEST_NAME }} \
             docker://${{ env.DIST_IMAGE }}
 
