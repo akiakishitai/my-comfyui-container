@@ -1,0 +1,36 @@
+name: Clean up unneeded images on GHCR
+
+on:
+  # https://docs.github.com/ja/actions/reference/events-that-trigger-workflows#schedule
+  schedule:
+    - cron: '45 18 * * 0,2,4,6'
+  push:
+    paths:
+      - '.github/workflows/cleanup-ghcr.yml'
+
+jobs:
+  cleanup-images:
+    name: Delete images
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      packages: write
+
+    steps:
+      - name: Extract repository name
+        id: extract
+        env:
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          echo "repo_name=${REPOSITORY#*/}" >> "$GITHUB_OUTPUT"
+
+      # https://github.com/snok/container-retention-policy
+      - name: Delete untagged images older then 1h
+        uses: snok/container-retention-policy@4f22ef80902ad409ed55a99dc5133cc1250a0d03 # v3.0.0
+        with:
+          account: user
+          token: ${{ secrets.GITHUB_TOKEN }}
+          image-names: ${{ steps.extract.outputs.repo_name }}
+          tag-selection: untagged
+          cut-off: 1h
+          dry-run: false
