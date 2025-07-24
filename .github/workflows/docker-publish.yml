@@ -414,19 +414,30 @@ jobs:
             ${{ env.MANIFEST_NAME }} \
             docker://${{ env.DIST_IMAGE }}
 
-      # 複数のタグを付与する場合の処理
-      # https://github.com/containers/skopeo/blob/v1.13.3/docs/skopeo-copy.1.md
-      - name: Append tags with skopeo
+      # 追加するタグを抽出
+      # Outputs:
+      #   tags - 追加するタグの List
+      - name: Pickup additional tags
+        id: additional-tags
         env:
           ALL_TAGS: '${{ needs.container-meta.outputs.tags }}'
         run: |
-          remain_tags=$(sed '/^$/d; 1d' <<< "${ALL_TAGS}")
+          additional_tags=$(sed '/^$/d; 1d' <<< "${ALL_TAGS}")
+          echo "tags=${additional_tags}" >> "$GITHUB_OUTPUT"
 
+      # 追加するタグがあれば、追加処理を行う
+      # https://github.com/containers/skopeo/blob/v1.13.3/docs/skopeo-copy.1.md
+      - name: Append tags with skopeo
+        # 追加のタグがなければスキップ
+        if: ${{ steps.additional-tags.outputs.tags != '' }}
+        env:
+          ADDITIONAL_TAGS: ${{ steps.additional-tags.outputs.tags }}
+        run: |
           while read -r tag; do
             echo "add tag: ${tag}"
 
             skopeo copy "docker://${{ env.DIST_IMAGE }}" "docker://${{ env.REGISTRY }}/${tag}"
-          done <<< "${remain_tags}"
+          done <<< "${ADDITIONAL_TAGS}"
 
       # マルチプラットフォームイメージの確認
       - name: Check the multi-platform image
