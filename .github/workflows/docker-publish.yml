@@ -246,7 +246,7 @@ jobs:
           platforms: linux/${{ matrix.arch }}
           # https://docs.docker.com/build/exporters/oci-docker/
           outputs: |
-            type=oci,dest=${{ env.OCI_EXPORT }},tar=false,compression=zstd,compression-level=3,${{ env.CONTAINER_OUTPUTS_ANNOTATION }}
+            type=oci,dest=${{ env.OCI_EXPORT }},tar=false,compression=zstd,compression-level=10,${{ env.CONTAINER_OUTPUTS_ANNOTATION }}
           cache-from: type=gha,scope=linux_${{ matrix.arch }}
           cache-to: type=gha,mode=max,scope=linux_${{ matrix.arch }}
 
