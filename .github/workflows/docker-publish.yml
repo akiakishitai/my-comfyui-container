@@ -361,10 +361,17 @@ jobs:
       packages: write
     env:
       # 作成するマルチプラットフォームのイメージ名(<registry>/<image name>:<tag>)
-      DIST_IMAGE: '${{ needs.container-meta.outputs.image_ref }}'
+      # step で設定する。
+      DIST_IMAGE: ''
       MANIFEST_NAME: 'mylist:${{ needs.container-meta.outputs.version }}'
 
     steps:
+      - name: Set up environment variables
+        env:
+          DIST_IMAGE: '${{ env.REGISTRY }}/${{ needs.container-meta.outputs.image_ref }}'
+        run: |
+          echo "DIST_IMAGE=${{ env.DIST_IMAGE }}" >> "$GITHUB_ENV"
+
       # https://github.com/redhat-actions/podman-login/tree/v1.7
       - name: Login to ${{ env.REGISTRY }} with Podman
         id: login
@@ -420,7 +427,7 @@ jobs:
           while read -r tag; do
             echo "add tag: ${tag}"
 
-            skopeo copy "docker://${{ env.DIST_IMAGE }}" "docker://${tag}"
+            skopeo copy "docker://${{ env.DIST_IMAGE }}" "docker://${{ env.REGISTRY }}/${tag}"
           done <<< "${remain_tags}"
 
       # マルチプラットフォームイメージの確認
