@@ -7,6 +7,14 @@ on:
   push:
     paths:
       - '.github/workflows/cleanup-ghcr.yml'
+  # `pr-*` タグのイメージを削除する
+  # ref: ./docker-publish.yml
+  pull_request:
+    types:
+      - closed
+    branches:
+      - main
+      - develop
 
 jobs:
   cleanup-images:
@@ -33,4 +41,19 @@ jobs:
           image-names: ${{ steps.extract.outputs.repo_name }}
           tag-selection: untagged
           cut-off: 1h
+          dry-run: false
+
+      - name: Delete `pr-*` tagged images
+        uses: snok/container-retention-policy@4f22ef80902ad409ed55a99dc5133cc1250a0d03 # v3.0.0
+        if: ${{ github.event_name == 'pull_request' }}
+        with:
+          account: user
+          token: ${{ secrets.GITHUB_TOKEN }}
+          image-names: ${{ steps.extract.outputs.repo_name }}
+          image-tags: >
+            pr-${{ github.event.pull_request.number }}
+            pr-${{ github.event.pull_request.number }}-amd64
+            pr-${{ github.event.pull_request.number }}-arm64
+          tag-selection: tagged
+          cut-off: 10s
           dry-run: false
