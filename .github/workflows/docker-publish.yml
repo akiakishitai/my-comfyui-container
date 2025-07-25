@@ -445,10 +445,13 @@ jobs:
       - name: Pickup additional tags
         id: additional-tags
         env:
-          ALL_TAGS: '${{ needs.container-meta.outputs.tags }}'
+          ALL_TAGS: ${{ needs.container-meta.outputs.tags }}
         run: |
-          additional_tags=$(sed '/^$/d; 1d' <<< "${ALL_TAGS}")
-          echo "tags=${additional_tags}" >> "$GITHUB_OUTPUT"
+          {
+            echo 'tags<<EOT'
+            sed '/^$/d; 1d' <<< "${ALL_TAGS}"
+            echo 'EOT'
+          } >> "$GITHUB_OUTPUT"
 
       # 追加するタグがあれば、追加処理を行う
       # https://github.com/containers/skopeo/blob/v1.13.3/docs/skopeo-copy.1.md
@@ -466,6 +469,8 @@ jobs:
 
       # マルチプラットフォームイメージの確認
       - name: Check the multi-platform image
+        env:
+          ADDITIONAL_TAGS: ${{ steps.additional-tags.outputs.tags }}
         run: |
           echo "--- Check manifest ---"
           buildah manifest inspect "${{ env.DIST_IMAGE }}"
