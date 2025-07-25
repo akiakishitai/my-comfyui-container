@@ -182,6 +182,10 @@ jobs:
       id-token: write
     env:
       TRIVY_OUTPUT_FILE: trivy_report.sarif
+      # docker ビルド時のキャッシュ設定
+      # https://docs.docker.com/build/cache/backends/gha/
+      DOCKER_BUILD_CACHE_FROM: type=gha,scope=linux_${{ matrix.arch }}
+      DOCKER_BUILD_CACHE_TO: type=gha,mode=max,scope=linux_${{ matrix.arch }}
       # 出力するOCIレイアウトイメージのパス
       OCI_EXPORT: ${{ github.workspace }}/build/oci-${{ github.run_id }}
     outputs:
@@ -210,6 +214,27 @@ jobs:
           create_dir=$(dirname ${{ env.OCI_EXPORT }})
           mkdir "${create_dir}"
           echo "created to: ${create_dir}"
+
+      # プルリクエスト時、`docker/build-push-action` のキャッシュ設定をインラインキャッシュに変更
+      # GitHub Actions では現在ブランチもしくはデフォルトブランチのキャッシュしか利用できないため、
+      # キャッシュ生成を制限して GitHub Actions Caches の使用量を抑制する。
+      # (無効化したかったけどそれには `cache-to` プロパティを削除するしかなさそう)
+      - name: Change `DOCKER_BUILD_CACHE_*` to inline
+        id: cache-to
+        if: ${{ github.event_name == 'pull_request' || github.ref_name != 'develop' }}
+        env:
+          # inline キャッシュを参照できるように registry キャッシュ設定を追加
+          # https://docs.docker.com/build/ci/github-actions/cache/
+          # 複数行文字列の設定 (https://docs.github.com/ja/actions/reference/workflow-commands-for-github-actions#multiline-strings)
+          NEW_CACHE_FROM: |-
+            DOCKER_BUILD_CACHE_FROM<<EOT
+            type=registry,ref=${{ env.REGISTRY }}/${{ needs.container-meta.outputs.image_ref }}-${{ matrix.arch }}
+            ${{ env.DOCKER_BUILD_CACHE_FROM }}
+            EOT
+          NEW_CACHE_TO: type=inline
+        run: |
+          echo "${NEW_CACHE_FROM}" >> "$GITHUB_ENV"
+          echo "DOCKER_BUILD_CACHE_TO=${NEW_CACHE_TO}" >> "$GITHUB_ENV"
 
       # Set up BuildKit Docker container builder to be able to build
       # multi-platform images and export cache
@@ -247,8 +272,8 @@ jobs:
           # https://docs.docker.com/build/exporters/oci-docker/
           outputs: |
             type=oci,dest=${{ env.OCI_EXPORT }},tar=false,compression=zstd,compression-level=10,${{ env.CONTAINER_OUTPUTS_ANNOTATION }}
-          cache-from: type=gha,scope=linux_${{ matrix.arch }}
-          cache-to: type=gha,mode=max,scope=linux_${{ matrix.arch }}
+          cache-from: ${{ env.DOCKER_BUILD_CACHE_FROM }}
+          cache-to: ${{ env.DOCKER_BUILD_CACHE_TO }}
 
       - name: Check the output image
         run: |
