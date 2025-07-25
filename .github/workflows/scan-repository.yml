@@ -13,6 +13,8 @@ jobs:
   trivy-scan:
     name: Run Trivy filesystem scan
     runs-on: ubuntu-24.04
+    # maximum run time: 2 min
+    timeout-minutes: 2
     permissions:
       contents: read
       # セキュリティスキャン結果のアップロード許可

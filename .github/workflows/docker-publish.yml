@@ -28,6 +28,8 @@ jobs:
   lint-containerfile:
     name: Scan the Containerfile
     runs-on: ubuntu-24.04
+    # maximum run time: 2 min
+    timeout-minutes: 2
     permissions:
       contents: read
       # プルリクエスト操作許可
@@ -111,10 +113,54 @@ jobs:
               exit 10 ;;
           esac
 
+  # コンテナイメージ用のメタデータを出力
+  container-meta:
+    name: Outputs docker metadata
+    runs-on: ubuntu-24.04-arm
+    # maximum run time: 1 min
+    timeout-minutes: 1
+    outputs:
+      version: ${{ steps.meta.outputs.version }}
+      tags: ${{ steps.meta.outputs.tags }}
+      labels: ${{ steps.meta.outputs.labels }}
+      annotations: ${{ steps.meta.outputs.annotations }}
+      image_ref: ${{ steps.extract.outputs.image_ref }}
+    permissions:
+      contents: read
+
+    steps:
+      # Extract metadata (tags, labels) for Container
+      # https://github.com/docker/metadata-action
+      - name: Extract container metadata
+        id: meta
+        uses: docker/metadata-action@902fa8ec7d6ecbf8d84d538b9b233a880e428804 # v5.7.0
+        env:
+          DOCKER_METADATA_ANNOTATIONS_LEVELS: manifest
+        with:
+          # `images` property is converted to lowercase
+          images: ${{ env.IMAGE_NAME }}
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}},enable=${{ !startsWith(github.ref, 'refs/tags/v0.') }}
+            type=edge,branch=develop
+            type=ref,event=pr
+          labels: |
+            org.opencontainers.image.title=My ComfyUI Container
+            org.opencontainers.image.description=REST API server with ComfyUI backend
+            maintainer=${{ github.repository_owner }}
+
+      - name: Extract image reference
+        id: extract
+        run: |
+          echo "image_ref=${{ fromJSON(steps.meta.outputs.json).tags[0] }}" >> "$GITHUB_OUTPUT"
+
   # PR先が main ブランチの場合はレジストリにプッシュしない
-  build-multiarch:
+  build-image:
     name: Build and Push multi-architecture image
-    needs: lint-containerfile
+    needs:
+      - lint-containerfile
+      - container-meta
     strategy:
       fail-fast: false
       matrix:
@@ -124,6 +170,8 @@ jobs:
           - os: ubuntu-24.04-arm
             arch: arm64
     runs-on: ${{ matrix.os }}
+    # maximum run time: 33 min
+    timeout-minutes: 33
     permissions:
       contents: read
       packages: write
@@ -134,10 +182,59 @@ jobs:
       id-token: write
     env:
       TRIVY_OUTPUT_FILE: trivy_report.sarif
+      # docker ビルド時のキャッシュ設定
+      # https://docs.docker.com/build/cache/backends/gha/
+      DOCKER_BUILD_CACHE_FROM: type=gha,scope=linux_${{ matrix.arch }}
+      DOCKER_BUILD_CACHE_TO: type=gha,mode=max,scope=linux_${{ matrix.arch }}
+      # 出力するOCIレイアウトイメージのパス
+      OCI_EXPORT: ${{ github.workspace }}/build/oci-${{ github.run_id }}
+    outputs:
+      # プッシュしたアーキテクチャごとのイメージ
+      # JSON 形式などでまとめようとすると1つしか代入されない。
+      tag_amd64: '${{ steps.push-image.outputs.pushed_amd64 }}'
+      tag_arm64: '${{ steps.push-image.outputs.pushed_arm64 }}'
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+
+      # コンテナイメージ出力用のディレクトリを作成する
+      - name: Set up a directory for output image
+        id: tmpfs
+        run: |
+          echo "--- Disk info ---"
+          df -h
+          echo ""
+          sudo lsblk -d -o name,rota
+
+          echo "" "--- CPU/Mem info ---"
+          free -h
+
+          echo "" "--- Create a directory ---"
+          create_dir=$(dirname ${{ env.OCI_EXPORT }})
+          mkdir "${create_dir}"
+          echo "created to: ${create_dir}"
+
+      # プルリクエスト時、`docker/build-push-action` のキャッシュ設定をインラインキャッシュに変更
+      # GitHub Actions では現在ブランチもしくはデフォルトブランチのキャッシュしか利用できないため、
+      # キャッシュ生成を制限して GitHub Actions Caches の使用量を抑制する。
+      # (無効化したかったけどそれには `cache-to` プロパティを削除するしかなさそう)
+      - name: Change `DOCKER_BUILD_CACHE_*` to inline
+        id: cache-to
+        if: ${{ github.event_name == 'pull_request' || github.ref_name != 'develop' }}
+        env:
+          # inline キャッシュを参照できるように registry キャッシュ設定を追加
+          # https://docs.docker.com/build/ci/github-actions/cache/
+          # 複数行文字列の設定 (https://docs.github.com/ja/actions/reference/workflow-commands-for-github-actions#multiline-strings)
+          NEW_CACHE_FROM: |-
+            DOCKER_BUILD_CACHE_FROM<<EOT
+            type=registry,ref=${{ env.REGISTRY }}/${{ needs.container-meta.outputs.image_ref }}-${{ matrix.arch }}
+            ${{ env.DOCKER_BUILD_CACHE_FROM }}
+            EOT
+          NEW_CACHE_TO: type=inline
+        run: |
+          echo "${NEW_CACHE_FROM}" >> "$GITHUB_ENV"
+          echo "DOCKER_BUILD_CACHE_TO=${NEW_CACHE_TO}" >> "$GITHUB_ENV"
 
       # Set up BuildKit Docker container builder to be able to build
       # multi-platform images and export cache
@@ -154,48 +251,41 @@ jobs:
           password: ${{ github.token }}
           registry: ${{ env.REGISTRY }}
 
-      # Extract metadata (tags, labels) for Container
-      # https://github.com/docker/metadata-action
-      - name: Extract container metadata
-        id: meta
-        uses: docker/metadata-action@902fa8ec7d6ecbf8d84d538b9b233a880e428804 # v5.7.0
-        env:
-          DOCKER_METADATA_ANNOTATIONS_LEVELS: manifest,index
-        with:
-          # `images` property is converted to lowercase
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
-          tags: |
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
-            type=semver,pattern={{major}},enable=${{ !startsWith(github.ref, 'refs/tags/v0.') }}
-            type=edge,branch=develop
-            type=ref,event=pr
-          labels: |
-            org.opencontainers.image.title=My ComfyUI Container
-            org.opencontainers.image.description=REST API server with ComfyUI backend
-            maintainer=${{ github.repository_owner }}
-          annotations: |
-            org.opencontainers.image.description=REST API server with ComfyUI backend with multi architecture
-
       # Build and push Docker image with Buildx (don't push on PR)
       # https://github.com/docker/build-push-action
-      - name: Build and push Docker image
+      - name: Build Docker image
         id: build-and-push
         uses: docker/build-push-action@14487ce63c7a62a4a324b0bfb37086795e31c6c1 # v6.16.0
+        timeout-minutes: 20
+        env:
+          DOCKER_BUILD_RECORD_RETENTION_DAYS: 5
+          CONTAINER_OUTPUTS_ANNOTATION: >
+            annotation.org.opencontainers.image.ref.name=${{ needs.container-meta.outputs.version }}-${{ matrix.arch }}
         with:
           context: .
           file: Containerfile
-          push: ${{ github.base_ref != 'main' }}
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          annotations: ${{ steps.meta.outputs.annotations }}
+          push: false
+          tags: ${{ needs.container-meta.outputs.image_ref }}-${{ matrix.arch }}
+          labels: ${{ needs.container-meta.outputs.labels }}
+          annotations: ${{ needs.container-meta.outputs.annotations }}
           platforms: linux/${{ matrix.arch }}
-          cache-from: type=gha,scope=linux_${{ matrix.arch }}
-          cache-to: type=gha,mode=max,scope=linux_${{ matrix.arch }}
+          # https://docs.docker.com/build/exporters/oci-docker/
+          outputs: |
+            type=oci,dest=${{ env.OCI_EXPORT }},tar=false,compression=zstd,compression-level=10,${{ env.CONTAINER_OUTPUTS_ANNOTATION }}
+          cache-from: ${{ env.DOCKER_BUILD_CACHE_FROM }}
+          cache-to: ${{ env.DOCKER_BUILD_CACHE_TO }}
+
+      - name: Check the output image
+        run: |
+          echo "--- Size ---"
+          du -h -s ${{ env.OCI_EXPORT }}
+
+          echo "" "--- Inspect image ---"
+          skopeo inspect oci:${{ env.OCI_EXPORT }}
 
       - name: Run Trivy build image scan
-        if: ${{ github.base_ref != 'main' }}
         uses: aquasecurity/trivy-action@dc5a429b52fcf669ce959baa2c2dd26090d2a6c4 # v0.32.0
+        timeout-minutes: 5
         env:
           # https://github.com/aquasecurity/trivy-action/issues/279#issuecomment-1925050674
           TRIVY_PLATFORM: linux/${{ matrix.arch }}
@@ -203,7 +293,7 @@ jobs:
           scan-type: image
           # python パッケージが多いのと事前にファイルシステムでチェックしてるため secret は除外する
           scanners: vuln
-          image-ref: ${{ fromJson(steps.meta.outputs.json).tags[0] }}
+          input: ${{ env.OCI_EXPORT }}
           format: sarif
           output: ${{ env.TRIVY_OUTPUT_FILE }}
           severity: CRITICAL,HIGH
@@ -220,18 +310,45 @@ jobs:
       # Upload a trivy report for code scanning
       # https://github.com/github/codeql-action/blob/v3.29.2/upload-sarif/action.yml
       - name: Upload scaned report
-        if: ${{ github.base_ref != 'main' }}
         uses: github/codeql-action/upload-sarif@181d5eefc20863364f96762470ba6f862bdef56b # v3.29.2
         with:
           sarif_file: ${{ env.TRIVY_OUTPUT_FILE }}
           category: trivy-image-${{ matrix.arch }}
           token: ${{ secrets.GITHUB_TOKEN }}
 
+      # Push the build-image with an architecture-tag
+      - name: Push a container image to ${{ env.REGISTRY }}
+        id: push-image
+        if: ${{ github.base_ref != 'main' }}
+        timeout-minutes: 6
+        env:
+          CONTAINER_REF: '${{ env.REGISTRY }}/${{ needs.container-meta.outputs.image_ref }}-${{ matrix.arch }}'
+        run: |
+          skopeo copy \
+            --dest-compress-format zstd \
+            --dest-compress-level 10 \
+            oci:${{ env.OCI_EXPORT }} \
+            "docker://${CONTAINER_REF}"
+
+          echo "--- Pushed Info ---"
+          echo "Pushed: ${CONTAINER_REF}"
+          skopeo inspect "docker://${CONTAINER_REF}" | jq 'del(.Layers, .LayersData, .Env)'
+
+          echo "pushed_${{ matrix.arch }}=${CONTAINER_REF}" >> "$GITHUB_OUTPUT"
+
+      - name: Push container image to ttl.sh
+        if: ${{ ! always() }}
+        run: |
+          DOCKER_REF="ttl.sh/${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.arch }}:1h"
+          skopeo copy oci:${{ env.OCI_EXPORT }} "docker://${DOCKER_REF}"
+          echo "Pushed: ${DOCKER_REF}"
+
       # Install the cosign tool except on PR
       # If PR to main branch, skip.
       # https://github.com/sigstore/cosign-installer
       - name: Install cosign
-        if: ${{ github.base_ref != 'main' }}
+        id: setup-cosign
+        if: ${{ ! always() }}
         uses: sigstore/cosign-installer@59acb6260d9c0ba8f4a2f9d9b48431a222b68e20 #v3.5.0
         with:
           cosign-release: 'v2.2.4'
@@ -243,10 +360,10 @@ jobs:
       # If PR to main branch, skip.
       # https://github.com/sigstore/cosign
       - name: Sign the published Docker image
-        if: ${{ github.base_ref != 'main' }}
+        if: ${{ steps.setup-cosign.outcome == 'success' }}
         env:
           # https://docs.github.com/en/actions/security-guides/security-hardening-for-github-actions#using-an-intermediate-environment-variable
-          TAGS: ${{ steps.meta.outputs.tags }}
+          TAGS: ${{ needs.container-meta.outputs.tags }}
           DIGEST: ${{ steps.build-and-push.outputs.digest }}
         # This step uses the identity token to provision an ephemeral certificate
         # against the sigstore community Fulcio instance.
@@ -254,3 +371,109 @@ jobs:
           echo "${TAGS}" | while read -r image; do
             cosign sign --yes "${image}@${DIGEST}"
           done
+
+  # プッシュしたイメージに対する処理
+  post-push-images:
+    name: Post-push images
+    if: ${{ needs.build-image.outputs.tag_amd64 != '' && needs.build-image.outputs.tag_arm64 != '' }}
+    needs:
+      - build-image
+      - container-meta
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      packages: write
+    env:
+      # 作成するマルチプラットフォームのイメージ名(<registry>/<image name>:<tag>)
+      # step で設定する。
+      DIST_IMAGE: ''
+      MANIFEST_NAME: 'mylist:${{ needs.container-meta.outputs.version }}'
+
+    steps:
+      - name: Set up environment variables
+        env:
+          DIST_IMAGE: '${{ env.REGISTRY }}/${{ needs.container-meta.outputs.image_ref }}'
+        run: |
+          echo "DIST_IMAGE=${{ env.DIST_IMAGE }}" >> "$GITHUB_ENV"
+
+      # https://github.com/redhat-actions/podman-login/tree/v1.7
+      - name: Login to ${{ env.REGISTRY }} with Podman
+        id: login
+        uses: redhat-actions/podman-login@4934294ad0449894bcd1e9f191899d7292469603 # v1.7
+        env:
+          LOGIN_REGISTRY: ${{ format('{0}/{1}', env.REGISTRY, github.repository_owner) }}
+        with:
+          registry: ${{ env.LOGIN_REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # imageName: https://github.com/containers/image/blob/v5.36.0/docs/containers-transports.5.md
+      # buildah manifest add: https://github.com/containers/buildah/blob/v1.33.7/docs/buildah-manifest-add.1.md
+      - name: Create a multi-platform manifest
+        id: create-manifest
+        env:
+          PUSHED_TAGS: |
+            ${{ needs.build-image.outputs.tag_amd64 }}
+            ${{ needs.build-image.outputs.tag_arm64 }}
+          # 追加アノテーション
+          ANNO_DESC: org.opencontainers.image.description=REST API server with ComfyUI backend with multi architecture
+        run: |
+          buildah manifest create ${{ env.MANIFEST_NAME }}
+
+          while read -r image; do
+            echo "include ${image}"
+
+            buildah manifest add \
+              --annotation "${ANNO_DESC}" \
+              ${{ env.MANIFEST_NAME }} \
+              "docker://${image}"
+          done < <(sed '/^$/d' <<< "${PUSHED_TAGS}")
+
+      # https://github.com/containers/buildah/blob/v1.33.7/docs/buildah-manifest-push.1.md
+      - name: Push the multi-platform manifest
+        id: push-manifest
+        run: |
+          buildah manifest push \
+            --all \
+            ${{ env.MANIFEST_NAME }} \
+            docker://${{ env.DIST_IMAGE }}
+
+      # 追加するタグを抽出
+      # Outputs:
+      #   tags - 追加するタグの List
+      - name: Pickup additional tags
+        id: additional-tags
+        env:
+          ALL_TAGS: ${{ needs.container-meta.outputs.tags }}
+        run: |
+          {
+            echo 'tags<<EOT'
+            sed '/^$/d; 1d' <<< "${ALL_TAGS}"
+            echo 'EOT'
+          } >> "$GITHUB_OUTPUT"
+
+      # 追加するタグがあれば、追加処理を行う
+      # https://github.com/containers/skopeo/blob/v1.13.3/docs/skopeo-copy.1.md
+      - name: Append tags with skopeo
+        # 追加のタグがなければスキップ
+        if: ${{ steps.additional-tags.outputs.tags != '' }}
+        env:
+          ADDITIONAL_TAGS: ${{ steps.additional-tags.outputs.tags }}
+        run: |
+          while read -r tag; do
+            echo "add tag: ${tag}"
+
+            skopeo copy "docker://${{ env.DIST_IMAGE }}" "docker://${{ env.REGISTRY }}/${tag}"
+          done <<< "${ADDITIONAL_TAGS}"
+
+      # マルチプラットフォームイメージの確認
+      - name: Check the multi-platform image
+        env:
+          ADDITIONAL_TAGS: ${{ steps.additional-tags.outputs.tags }}
+        run: |
+          echo "--- Check manifest ---"
+          buildah manifest inspect "${{ env.DIST_IMAGE }}"
+
+          echo "" "--- Check image ---"
+          skopeo inspect "docker://${{ env.DIST_IMAGE }}"
