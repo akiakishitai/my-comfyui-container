@@ -1,0 +1,34 @@
+# yaml-language-server: $schema=https://www.schemastore.org/semantic-release.json
+
+# Configuration
+# https://github.com/semantic-release/semantic-release/blob/v24.2.7/docs/usage/configuration.md#configuration
+
+branches:
+  # Release
+  - name: main
+  # Pre-release
+  - name: pre-release
+    prerelease: true
+    channel: alpha
+  - name: 'test/**'
+    # `prerelease: true` にすると `channel` を設定しても
+    # `EPRERELEASEBRANCH A pre-release branch configuration is invalid in the `branches` configuration.`
+    # エラーが発生する。
+    # （`prerelease: true` の場合は `name` プロパティを参照して `/` があるからエラーが起こっている、のかも）
+    prerelease: snapshot.test
+    # channel: snapshot.test
+
+plugins:
+  -
+    # https://github.com/semantic-release/commit-analyzer
+    - '@semantic-release/commit-analyzer'
+    - preset: conventionalcommits
+  -
+    # https://github.com/semantic-release/release-notes-generator
+    - '@semantic-release/release-notes-generator'
+    - preset: conventionalcommits
+  -
+    # https://github.com/semantic-release/github
+    - '@semantic-release/github'
+    - draftRelease: true
+

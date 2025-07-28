@@ -6,7 +6,12 @@ on:
       - develop
     # Publish semver tags as releases.
     tags:
-      - 'v*.*.*'
+      # Only release tags
+      # https://docs.github.com/ja/actions/reference/workflows-and-actions/workflow-syntax#filter-pattern-cheat-sheet
+      - 'v[0-9]+.[0-9]+.[0-9]+'
+      # Pre-release tags
+      - 'v[0-9]+.[0-9]+.[0-9]+-alpha*'
+      - 'v[0-9]+.[0-9]+.[0-9]+-beta*'
   pull_request:
     # filter
     paths:
@@ -16,6 +21,7 @@ on:
       - .github/workflows/docker-publish.yml
     branches:
       - main
+      - pre-release
       - develop
 
 env:
@@ -145,6 +151,7 @@ jobs:
             type=semver,pattern={{major}},enable=${{ !startsWith(github.ref, 'refs/tags/v0.') }}
             type=edge,branch=develop
             type=ref,event=pr
+            type=raw,enable=false,value=test
           labels: |
             org.opencontainers.image.title=My ComfyUI Container
             org.opencontainers.image.description=REST API server with ComfyUI backend
@@ -319,7 +326,7 @@ jobs:
       # Push the build-image with an architecture-tag
       - name: Push a container image to ${{ env.REGISTRY }}
         id: push-image
-        if: ${{ github.base_ref != 'main' }}
+        if: ${{ github.base_ref != 'pre-release' && github.base_ref != 'main' }}
         timeout-minutes: 6
         env:
           CONTAINER_REF: '${{ env.REGISTRY }}/${{ needs.container-meta.outputs.image_ref }}-${{ matrix.arch }}'
@@ -430,47 +437,25 @@ jobs:
               "docker://${image}"
           done < <(sed '/^$/d' <<< "${PUSHED_TAGS}")
 
+      # マルチプラットフォームイメージのプッシュ
+      # 追加するタグ (`latest`, `1` など) もここで処理する。
       # https://github.com/containers/buildah/blob/v1.33.7/docs/buildah-manifest-push.1.md
       - name: Push the multi-platform manifest
         id: push-manifest
-        run: |
-          buildah manifest push \
-            --all \
-            ${{ env.MANIFEST_NAME }} \
-            docker://${{ env.DIST_IMAGE }}
-
-      # 追加するタグを抽出
-      # Outputs:
-      #   tags - 追加するタグの List
-      - name: Pickup additional tags
-        id: additional-tags
         env:
-          ALL_TAGS: ${{ needs.container-meta.outputs.tags }}
-        run: |
-          {
-            echo 'tags<<EOT'
-            sed '/^$/d; 1d' <<< "${ALL_TAGS}"
-            echo 'EOT'
-          } >> "$GITHUB_OUTPUT"
-
-      # 追加するタグがあれば、追加処理を行う
-      # https://github.com/containers/skopeo/blob/v1.13.3/docs/skopeo-copy.1.md
-      - name: Append tags with skopeo
-        # 追加のタグがなければスキップ
-        if: ${{ steps.additional-tags.outputs.tags != '' }}
-        env:
-          ADDITIONAL_TAGS: ${{ steps.additional-tags.outputs.tags }}
+          PUSH_TAGS: ${{ needs.container-meta.outputs.tags }}
         run: |
           while read -r tag; do
             echo "add tag: ${tag}"
 
-            skopeo copy "docker://${{ env.DIST_IMAGE }}" "docker://${{ env.REGISTRY }}/${tag}"
-          done <<< "${ADDITIONAL_TAGS}"
+          buildah manifest push \
+            --all \
+            ${{ env.MANIFEST_NAME }} \
+            "docker://${{ env.REGISTRY }}/${tag}"
+          done <<< "${PUSH_TAGS}"
 
       # マルチプラットフォームイメージの確認
       - name: Check the multi-platform image
-        env:
-          ADDITIONAL_TAGS: ${{ steps.additional-tags.outputs.tags }}
         run: |
           echo "--- Check manifest ---"
           buildah manifest inspect "${{ env.DIST_IMAGE }}"

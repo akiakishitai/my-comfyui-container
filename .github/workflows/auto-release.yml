@@ -1,0 +1,64 @@
+name: Auto Release
+
+on:
+  push:
+    branches:
+      - pre-release
+      - main
+  pull_request:
+    branches:
+      # https://docs.github.com/ja/actions/reference/workflows-and-actions/workflow-syntax#filter-pattern-cheat-sheet
+      - 'test/**'
+
+jobs:
+  release:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 3
+    permissions:
+      # タグ作成に書き込み権限が必要
+      contents: write
+      # リリースノート作成やIssueへのリンクに必要
+      issues: write
+      # PR へのコメントに必要
+      pull-requests: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          # Fetch all history for all branches and tags
+          fetch-depth: 0
+          # Partial clone: blobless
+          filter: 'blob:none'
+
+      # https://github.com/actions/setup-node
+      - name: Setup Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 20
+
+      # https://github.com/semantic-release/semantic-release/blob/master/docs/usage/installation.md#installation
+      - name: Install semantic-release
+        env:
+          # `semantic-release` 本体
+          SEMANTIC_RELEASE: 'semantic-release@"^24.2.7"'
+          # Conventional Commits 仕様に準拠させる場合に必要なパッケージ
+          # https://github.com/conventional-changelog/conventional-changelog/tree/master/packages/conventional-changelog-conventionalcommits
+          CONVENTIONAL_COMMITS: 'conventional-changelog-conventionalcommits@"^9.1.0"'
+        run: |
+          npm install --save-dev ${{ env.SEMANTIC_RELEASE }} ${{ env.CONVENTIONAL_COMMITS }}
+
+      - name: Setup release config
+        env:
+          SRC_CONFIG: ${{ github.workspace }}/.github/.releaserc.yaml
+          LINK: .releaserc.yaml
+        run: |
+          ln -s  "${SRC_CONFIG}" "${LINK}"
+          ls -Alh "${LINK}"
+
+      # リリース処理
+      - name: Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          npx semantic-release
