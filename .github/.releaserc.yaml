@@ -4,7 +4,12 @@
 # https://github.com/semantic-release/semantic-release/blob/v24.2.7/docs/usage/configuration.md#configuration
 
 branches:
+  # Release
   - name: main
+  # Pre-release
+  - name: pre-release
+    prerelease: true
+    channel: alpha
   - name: 'test/**'
     # `prerelease: true` にすると `channel` を設定しても
     # `EPRERELEASEBRANCH A pre-release branch configuration is invalid in the `branches` configuration.`

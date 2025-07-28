@@ -3,9 +3,12 @@ name: Auto Release
 on:
   push:
     branches:
+      - pre-release
+      - main
+  pull_request:
+    branches:
       # https://docs.github.com/ja/actions/reference/workflows-and-actions/workflow-syntax#filter-pattern-cheat-sheet
       - 'test/**'
-      - main
 
 jobs:
   release:
@@ -58,5 +61,4 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          npx semantic-release \
-            --dry-run
+          npx semantic-release
