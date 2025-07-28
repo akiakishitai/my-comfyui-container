@@ -6,9 +6,12 @@ on:
       - develop
     # Publish semver tags as releases.
     tags:
-      # Only release tags, exclude pre-release tags
+      # Only release tags
       # https://docs.github.com/ja/actions/reference/workflows-and-actions/workflow-syntax#filter-pattern-cheat-sheet
       - 'v[0-9]+.[0-9]+.[0-9]+'
+      # Pre-release tags
+      - 'v[0-9]+.[0-9]+.[0-9]+-alpha*'
+      - 'v[0-9]+.[0-9]+.[0-9]+-beta*'
   pull_request:
     # filter
     paths:
@@ -18,6 +21,7 @@ on:
       - .github/workflows/docker-publish.yml
     branches:
       - main
+      - pre-release
       - develop
 
 env:
@@ -322,7 +326,7 @@ jobs:
       # Push the build-image with an architecture-tag
       - name: Push a container image to ${{ env.REGISTRY }}
         id: push-image
-        if: ${{ github.base_ref != 'main' }}
+        if: ${{ github.base_ref != 'pre-release' && github.base_ref != 'main' }}
         timeout-minutes: 6
         env:
           CONTAINER_REF: '${{ env.REGISTRY }}/${{ needs.container-meta.outputs.image_ref }}-${{ matrix.arch }}'
