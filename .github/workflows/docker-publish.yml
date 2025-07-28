@@ -6,7 +6,9 @@ on:
       - develop
     # Publish semver tags as releases.
     tags:
-      - 'v*.*.*'
+      # Only release tags, exclude pre-release tags
+      # https://docs.github.com/ja/actions/reference/workflows-and-actions/workflow-syntax#filter-pattern-cheat-sheet
+      - 'v[0-9]+.[0-9]+.[0-9]+'
   pull_request:
     # filter
     paths:
