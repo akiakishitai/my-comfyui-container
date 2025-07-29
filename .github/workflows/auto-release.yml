@@ -73,7 +73,18 @@ jobs:
 
       # リリース処理
       - name: Release
+        id: release
+        if: ${{ ! startsWith(github.ref_name, 'test/') }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           yarn --cwd ${{ env.PROJECT_ROOT }} semantic-release
+
+      # リリースのテスト用
+      - name: Test Release
+        if: ${{ steps.release.conclusion == 'skipped' }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          yarn --cwd ${{ env.PROJECT_ROOT }} semantic-release --dry-run
+
