@@ -21,6 +21,11 @@ jobs:
       issues: write
       # PR へのコメントに必要
       pull-requests: write
+    env:
+      # `semantic-release` 用の package.json ファイルがあるディレクトリ
+      # hashFiles 関数 (https://docs.github.com/ja/actions/reference/evaluate-expressions-in-workflows-and-actions#examples-with-multiple-patterns) でも使うため、
+      # `GITHUB_WORKSPACE` からの相対パスで指定
+      PROJECT_ROOT: .github
 
     steps:
       - name: Checkout repository
@@ -37,16 +42,28 @@ jobs:
         with:
           node-version: 20
 
+      # https://github.com/actions/cache
+      - name: Restore cached node_modules
+        id: restore-cache
+        uses: actions/cache@v4
+        env:
+          PACKAGE_JSON: ${{ env.PROJECT_ROOT }}/package.json
+        with:
+          path: ${{ env.PROJECT_ROOT }}/node_modules
+          key: ${{ runner.os }}-semantic-release-${{ hashFiles(env.PACKAGE_JSON) }}
+
       # https://github.com/semantic-release/semantic-release/blob/master/docs/usage/installation.md#installation
       - name: Install semantic-release
+        if: ${{ steps.restore-cache.outputs.cache-hit != 'true' }}
         env:
           # `semantic-release` 本体
           SEMANTIC_RELEASE: 'semantic-release@"^24.2.7"'
           # Conventional Commits 仕様に準拠させる場合に必要なパッケージ
           # https://github.com/conventional-changelog/conventional-changelog/tree/master/packages/conventional-changelog-conventionalcommits
           CONVENTIONAL_COMMITS: 'conventional-changelog-conventionalcommits@"^9.1.0"'
+        # yarn --cwd : https://classic.yarnpkg.com/lang/en/docs/cli/#toc-cwd
         run: |
-          npm install --save-dev ${{ env.SEMANTIC_RELEASE }} ${{ env.CONVENTIONAL_COMMITS }}
+          yarn --cwd ${{ env.PROJECT_ROOT }} install
 
       - name: Setup release config
         env:
@@ -61,4 +78,4 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          npx semantic-release
+          yarn --cwd ${{ env.PROJECT_ROOT }} semantic-release
