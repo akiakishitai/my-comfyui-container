@@ -8,7 +8,10 @@ branches:
   - name: main
   # Pre-release
   - name: pre-release
-    prerelease: true
+    # `prerelease: true` だと `name` プロパティを参照してバージョニングする
+    prerelease: alpha
+    # channel の値はバージョニングに影響してない
+    # npm に関係するのかも
     channel: alpha
   - name: 'test/**'
     # `prerelease: true` にすると `channel` を設定しても
